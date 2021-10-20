@@ -54,22 +54,24 @@ morimori.ynct@gmail.com　までご連絡ください。
 # 実行環境の作り方
 ## ローカル環境で動かす場合
 ### Pythonのインストール
-https://www.python.org/　からPython 3.8～Python 3.9をインストールします。
+https://www.python.org/  
+からPython 3.8～Python 3.9をインストールします。
 readmeモードが良いでしょう。
 その後、必要なライブラリをインストールします。
 インストールコマンドは、Pythonにパスを通した場合とそうでない場合で少し異なり、
 パスを通した場合は、  
-$ pip install -r requirements.txt
+$ pip install -r requirements.txt  
 
 パスを通していない場合は、  
-$ py -m pip install -r requirements.txt
+$ py -m pip install -r requirements.txt  
 です。
 
 
 ### ffmpegのインストール
 下記の記事を参考に、ffmpegをインストールしてください。
 
-参考記事：https://torisky.com/ffmpeg%E3%81%AE%E3%83%80%E3%82%A6%E3%83%B3%E3%83%AD%E3%83%BC%E3%83%89%E3%81%A8%E4%BD%BF%E3%81%84%E6%96%B9%EF%BC%882021%E5%B9%B41%E6%9C%88%EF%BC%89/
+参考記事：  
+https://torisky.com/ffmpeg%E3%81%AE%E3%83%80%E3%82%A6%E3%83%B3%E3%83%AD%E3%83%BC%E3%83%89%E3%81%A8%E4%BD%BF%E3%81%84%E6%96%B9%EF%BC%882021%E5%B9%B41%E6%9C%88%EF%BC%89/
 
 ### CUDAのインストール
 NVIDIA社製のGPUを搭載したマシンでは、GPUを学習と予測に利用可能です。
@@ -77,10 +79,13 @@ NVIDIA社製のGPUを搭載したマシンでは、GPUを学習と予測に利�
 下記の記事を参考に、CUDA toolkitとcuDNNをインストールしてください。
 （注意：たまに、CUDAに対応していないGPUボードがあります）
 
-参考記事：https://qiita.com/8128/items/2e884998cd1193f73e2f
+参考記事：  
+https://qiita.com/8128/items/2e884998cd1193f73e2f
 
 なお、インストールできるバージョンにはtensorflowにより制限ががあります。
-TensorFlow公式ページのGPU対応に関するソフトウェア要件に合致するバージョンを選択してください。
+TensorFlow公式ページのGPU対応に関するソフトウェア要件に合致するバージョンを選択してください。  
+
+TensorFlowのソフトウェア要件：  
 https://www.tensorflow.org/install/gpu?hl=ja
 
 
@@ -88,7 +93,8 @@ https://www.tensorflow.org/install/gpu?hl=ja
 Googleアカウントをお持ちであれば、Google Colaboratoryで動かすことも可能です。
 Googleアカウントにログインした状態でColaboratoryの新規ノートブックを作成してください。
 
-参考：https://atmarkit.itmedia.co.jp/ait/articles/1812/10/news145.html
+参考：  
+https://atmarkit.itmedia.co.jp/ait/articles/1812/10/news145.html
 
 その後、カレントディレクトリにファイル一式を置きます。
 
@@ -107,11 +113,11 @@ Googleアカウントにログインした状態でColaboratoryの新規ノー�
 
 デフォルトの設定ファイルを開けば、恐らく使い方は分かります。
 
-予測処理は、下記のコマンドで実行します。
-$ pyton predict.py
+予測処理は、下記のコマンドで実行します。  
+$ pyton predict.py  
 
-または、
-$ py predict.py
+または、  
+$ py predict.py  
 
 予測結果はrunsの中に連番で保存されます。
 
