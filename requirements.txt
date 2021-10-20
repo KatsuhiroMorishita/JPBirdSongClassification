@@ -1,0 +1,6 @@
+tensorflow
+pandas
+opencv-python
+scikit-image
+pyyaml
+librosa

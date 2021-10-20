@@ -1,0 +1,51 @@
+# memo
+# ■画像サイズ
+#  2018年モデルは(150, 150, 1) 
+#  2020年モデルは(200, 120, 3)  n_mels=128, top_remove=8とする。（要確認）
+#  2020年モデルは(200, 120, 3)  n_mels=120, top_remove=0とする。
+# ■他
+#  コロン:の後には半角スペースを入れること。
+#  シャープ#より右側はコメントで、プログラムには無視されます。
+
+
+# 学習モデルを動かすための設定
+GPU: False       # GPUを使うならTrue
+batch_size: 100  # 1度に予測する画像枚数。GPU使用で100とかだと若干だが時短になる
+
+
+# 花のサンプル画像を予測する場合
+mode: "image"   # image or sound
+size: [50, 50, 3]  # 識別機用の画像のサイズ. (width, height, channel)
+file_names: glob.glob(r'./data/images/flower_sample/**/*.jpg')   # 識別させたい画像のパス。globで検索できる。
+models: .\models\flower   # モデルのパス
+model_format: "hdf5"
+th: 0.5          # 尤度で識別した、と判断する閾値
+
+# サンプル音源をサンプルモデルで予測する場合 1
+#mode: "sound"   # image or sound
+#size: [150, 150, 1]  # 識別機用の画像のサイズ. (width, height, channel)
+#file_names: glob.glob(r'./data/sounds/*.wav')   # 識別させたい音源のパス。globで検索できる。
+#models: .\models\model2018   # モデルのパス
+#model_format: "hdf5"
+#th: 0.9          # 尤度で識別した、と判断する閾値
+
+
+# サンプル音源をサンプルモデルで予測する場合 2
+#mode: "sound"   # image or sound
+#size: [200, 120, 3]  # 識別機用の画像のサイズ. (width, height, channel)
+#file_names: glob.glob(r'./data/sounds/*.wav')   # 識別させたい音源のパス。globで検索できる。
+#models: .\models\model202109   # モデルのパス
+#model_format: "hdf5"
+#th: 0.8          # 尤度で識別した、と判断する閾値
+
+
+# 音源からスペクトログラムを作るための設定（学習に使用した画像の生成条件と揃えること）
+fmax: 22000       # 画像上端の周波数
+window_size: 5    # 1枚の画像にする時間幅[秒]
+top_remove: 0     # 内部で画像生成後に削る上端のピクセル数。縦のピクセル数はn_mels-top_removeとなる。
+hop: 0.0251       # 1 pixel幅に相当する時間幅[秒]
+load_mode: "kaiser_fast"   # 読み込む方法。mp3で影響大。kaiser_bestの方が綺麗ではある。
+sr: 44100         # 読み込み後のサンプリングレート。音源と異なる場合はリサンプリングされて時間がかかる。
+n_mels: 120       # スペクトログラムを作成する際の周波数のビン数。縦方向のピクセル数に関係する。
+shift_rate: 1     # 次の画像生成のためにどの程度ずらすかを決める。1だとオーバーラップなしで次のwindow_size秒後から作り始める。1以上でもOK。
+raw: True         # スペクトログラムに生の音声の振幅情報を埋め込むかどうか。Trueで埋め込む。
