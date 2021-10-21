@@ -100,7 +100,7 @@ class Discriminator:
         self.fw_result = None
         self.fw_likeliboods = None
 
-        # ラベルを返還する辞書の読み込み
+        # ラベルを変換する辞書の読み込み
         self.label_dict = None
         with open(label_path, 'rb') as f:
             self.label_dict = pickle.load(f)  # オブジェクト復元. dict
@@ -507,7 +507,7 @@ def main():
         print("file is not found. check file path.")
         exit()
 
-    # 読み込んだファイルと拡張子をチェック
+    # 読み込むファイルの拡張子をチェック
     for f in setting["file_names"]:
         root, ext = os.path.splitext(f)
         ext = ext.lower()
