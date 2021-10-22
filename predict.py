@@ -443,7 +443,8 @@ def set_default_setting():
     """ デフォルトの設定をセットして返す
     """
     params = {}
-    params["file_names"] = []      # 処理対象の音源のパスのリスト
+    params["file_names"] = []      # 処理対象の音源・画像のパスのリスト
+    params["targets"] = []         # 処理対象の音源・画像のフォルダやファイルパスパターンのパスのリスト（ディレクトリでの指定や、複数指定はこちらを使う）
     params["models"] = "all"       # 予測に使用するモデルのあるディレクトリ名（allだと、サブディレクトリも探す）
     params["model_format"] = "hdf5"  # モデルの形式。hdf5, h5, SavedModel(未対応)
     params["label_pattern"] = "label*.pickle"  # ラベルの名前パターン
@@ -490,7 +491,27 @@ def read_setting(fname):
         param.update(**obj)   # 辞書の結合 （Python 3.9以降なら記述を簡単にできる）
 
     # このモジュール特有の処理
-    pass
+    ## 指定されたフォルダ内で識別可能なファイルを探す。
+    files = []
+    for target in param["targets"]:
+        if os.path.isdir(target):      # ディレクトリが指定されていた場合
+            if param["mode"] == "image":
+                exts = [".jpeg", ".jpg", ".png", ".bmp"]
+            elif param["mode"] == "sound":
+                exts = [".mp3", ".wav"]
+            for ext in exts:
+                p = target + "/**/*" + ext
+                files += glob.glob(p)     # サブディレクトリも探す
+                p = target + "/*" + ext
+                files += glob.glob(p)     # 指定されたディレクトリ直下も探す
+        elif "*" in target:               # *が含まれる文字列だったら。
+            files += glob.glob(target)    # globを使ったパターン検索とみなす
+
+    #print("============================")
+    #print(files)
+
+    param["file_names"] += files
+    param["file_names"] = sorted(list(set(param["file_names"])))   # 重複排除
 
     return param
 
