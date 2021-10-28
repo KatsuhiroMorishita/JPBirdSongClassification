@@ -18,17 +18,19 @@
 #  2021-07-18 ver.9  kerasをtensorlowの中のものを使うように変更  
 #  2021-07-27        軽微なデバッグ（CPU版は動作確認）。変数名の意味が合わないので、overlap_rateをshift_rateに変更した。 
 #  2021-10-19 ver.10 yamlによる設定ファイルの読み込みに変更し、少し安全になった。
+#  2021-10-28        設定を保存するようにした。また、多数のモデルを指定した場合のバグを修正・フォルダを分けて保存することにも対応した。
+#                    前回の学習結果を使って予測するモードも付けたので、PowerShellなどで学習から予測までを連続的に実施できるようになった。
+#                    （以前からやれていたけど、いちいちモデルのコピーとかしなくていいのでスクリプトがシンプルになるはず）
 # todo:
 #    モデルの保存形式をhdf5からSavedModelに変えたい。少なくとも対応したい。
 # author: Katsuhiro Morishita
 # created: 2019-10-29
-import sys, os, re, glob
-import time
+import sys, os, re, glob, copy, time, pickle, pprint
+from datetime import datetime as dt
 import numpy as np
 import matplotlib.pyplot as plt
 import librosa
 from PIL import Image
-import pickle
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 import yaml
@@ -39,7 +41,7 @@ import libs.sound_image7 as si
 
 
 def last_dirnumber(pattern="train"):
-    """ 既に保存されている学習・予測フォルダの最大の番号を取得
+    """ 既に保存されている学習・予測フォルダ等の最大の番号を取得
     """
     path = r'.\runs'
     dirs = os.listdir(path=path)
@@ -55,14 +57,14 @@ def last_dirnumber(pattern="train"):
 
 
 def last_dirpath(pattern="train"):
-    """ 最大の番号を持つ既に保存されている学習・予測フォルダのパスを返す
+    """ 最大の番号を持つ既に保存されている学習・予測フォルダ等のパスを返す
     """
     max_, path = last_dirnumber(pattern)
     return os.path.join(path, pattern + str(max_)) 
 
 
 def next_dirpath(pattern="train"):
-    """ 学習・予測フォルダを新規で作成する場合のパスを返す
+    """ 学習・予測フォルダ等を新規で作成する場合のパスを返す
     """
     max_, path = last_dirnumber(pattern)
     return os.path.join(path, pattern + str(max_ + 1)) 
@@ -373,7 +375,15 @@ def predict_sound(fname, setting, discriminators):
             ss, ee = int(s*sr), int(e*sr)   # 切り出すインデックス
             b = wav[ss : ee]                # 音源の切り出し
             #print("b len, ", len(b), ss, ee)   # for debug
-            img = si.get_melspectrogram_image(b, sr, n_mels=n_mels, fmax=fmax, n_fft=n_fft, hop_length=hop_l, top_remove=tr, raw=raw)  # スペクトログラム画像を作成
+            img = si.get_melspectrogram_image(b, 
+                                              sr, 
+                                              n_mels=n_mels, 
+                                              fmax=fmax, 
+                                              n_fft=n_fft, 
+                                              hop_length=hop_l, 
+                                              top_remove=tr, 
+                                              raw=raw,
+                                              )  # スペクトログラム画像を作成
 
             if img is not None:   # 並列化しても、ここは順序を守る必要がある
                 fpath = os.path.abspath(fname)
@@ -419,7 +429,7 @@ def read_models(dir_path, img_size, th, model_format="hdf5", label_pattern="labe
     labels = glob.glob(os.path.join(dir_path, label_pattern))
     if len(labels) == 0:
         return []
-    label_path = labels[0]   # 複数のラベルがあっても、1つに絞る（原則、1つを保存すること）
+    label_path = labels[0]   # 複数のラベルがあっても、1つに絞る（原則、1つのフォルダに1つのラベルを保存すること）
 
     # モデルのパスを取得（複数OK）
     model_pattern = "*." + model_format
@@ -429,7 +439,13 @@ def read_models(dir_path, img_size, th, model_format="hdf5", label_pattern="labe
         return []
 
     # 識別器をモデルの数だけ作成
-    discriminators_ = [Discriminator(model_path=model_path, label_path=label_path, img_size=img_size, th=th, save_dir=save_dir) for model_path in models]
+    discriminators_ = [Discriminator(model_path=model_path, 
+                                     label_path=label_path, 
+                                     img_size=img_size, 
+                                     th=th, 
+                                     save_dir=os.path.join(save_dir, os.path.basename(os.path.dirname(model_path))),
+                                     ) 
+                        for model_path in models]
 
     return discriminators_
 
@@ -445,7 +461,7 @@ def set_default_setting():
     params = {}
     params["file_names"] = []      # 処理対象の音源・画像のパスのリスト
     params["targets"] = []         # 処理対象の音源・画像のフォルダやファイルパスパターンのパスのリスト（ディレクトリでの指定や、複数指定はこちらを使う）
-    params["models"] = "all"       # 予測に使用するモデルのあるディレクトリ名（allだと、サブディレクトリも探す）
+    params["models"] = "all"       # 予測に使用するモデルのあるディレクトリ名の リスト or "all" or "last train"。"all"だと、カレントディレクトリとそのサブディレクトリ直下を探す。
     params["model_format"] = "hdf5"  # モデルの形式。hdf5, h5, SavedModel(未対応)
     params["label_pattern"] = "label*.pickle"  # ラベルの名前パターン
     params["mode"] = "sound"       # 処理モード（画像imageか、音源soundか）
@@ -516,12 +532,20 @@ def read_setting(fname):
     return param
 
 
+def print_setting(params):
+    """いい感じに設定内容の辞書を表示する
+    """
+    params_ = copy.deepcopy(params)
+    params_["file_names"] = params_["file_names"][:10]
+    pprint.pprint(params_)
+
+
 
 
 def main():
     # 設定を読み込み
     setting = read_setting("predict_setting.yaml")
-    print(setting)
+    print_setting(setting)
 
     # 対象ファイルのチェック
     if len(setting["file_names"]) == 0:
@@ -553,11 +577,12 @@ def main():
     # 識別器の準備
     discriminators = []
     models = setting["models"]
-    if models == "all":   # 全ディレクトリの場合
+    if models == "all":   # カレントディレクトリ内の全ディレクトリ直下の場合
         dirs = os.listdir() + ["."]
+    elif models == "last train":         # 最後の学習フォルダを指定された場合
+        dirs = [last_dirpath("train")]   # 最後に保存されている学習結果の保存フォルダ内のモデルを探させる
     else:
-        dirs = [models]   # 特定のディレクトリの場合
-    #print("++++++++", dirs, os.listdir(models))
+        dirs = models   # ディレクトリパスのリストの場合
     save_dir = next_dirpath("predict")   # 結果の保存先
     for dir_path in dirs:
         dis_ = read_models(dir_path, setting["size"], setting["th"], 
@@ -565,6 +590,14 @@ def main():
                         label_pattern=setting["label_pattern"], 
                         save_dir=save_dir)
         discriminators += dis_
+
+
+    # 設定の保存（後でパラメータを追えるように）
+    now_ = dt.now().strftime('%Y%m%d%H%M')
+    fname = os.path.join(save_dir, "predict_setting_{}.yaml".format(now_))
+    with open(fname, 'w', encoding="utf-8-sig") as fw:
+        yaml.dump(setting, fw)
+
     
     # 識別器があれば、処理開始
     if len(discriminators) != 0:
@@ -574,7 +607,7 @@ def main():
 
         # 予測
         fnames = sorted(setting["file_names"])    # 処理対象ファイルをソート
-        print(fnames)
+        print(fnames[:10])
 
         if setting["mode"] == "sound":       # 音声ファイルを予測
             for fname in fnames:             # 音声ファイルはサイズが大きいので、音声ファイルごとに処理
