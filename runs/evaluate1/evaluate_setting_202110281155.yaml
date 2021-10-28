@@ -1,0 +1,10 @@
+﻿F_th: 0.005
+basename_use: true
+graph_show: false
+last_predict_use: false
+likelihood_files:
+- ./data/likelihoods\prediction_likelihoods_model_202109.csv
+list_name: ./data/timelists/yanbal_sample_timelist.txt
+margin: 2
+tag: kuina
+y_score_test: false

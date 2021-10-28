@@ -1,0 +1,9 @@
+tag: "kuina"   # 評価対象のタグ
+margin: 2      # 正解の時間区間と比較する際の余裕。[秒]
+F_th: 0.005    # F値を計算する際に使う閾値
+likelihood_files:    # 尤度で示された識別結果のファイルのリスト
+  glob.glob("./data/likelihoods/prediction_likelihoods*.csv")
+list_name:           # 正解の区間リスト
+  "./data/timelists/yanbal_sample_timelist.txt"
+basename_use: True   # ファイル名だけで、正解と予測結果を突き合わせるならTrue。フルパス推奨なのでFalseがデフォルト。
+#last_predict_use: True  # 最後の予測フォルダ内の結果を使うならTrue
