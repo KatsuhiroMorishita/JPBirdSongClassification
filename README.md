@@ -34,8 +34,8 @@ JPBirdSongClassificationはVGG16をベースの野鳥の鳴き声を識別する
 
 また、以下の種は対応作業中、または対応予定の種です。
 - リュウキュウコノハズク
+- リュウキュウアカショウビン
 - アカヒゲ
-- アカショウビン
 - モズ
 - ネコ
 
@@ -51,7 +51,7 @@ JPBirdSongClassificationはVGG16をベースの野鳥の鳴き声を識別する
 <summary>Pythonのインストール</summary>
 https://www.python.org/  
 からPython 3.8～Python 3.9をインストールします。
-readmeモードが良いでしょう。
+just meモードが良いでしょう。
 </details>
   
 
@@ -93,7 +93,7 @@ https://git-scm.com/
 
 <details>
 <summary>プログラムのダウンロードとPythonのライブラリのインストール</summary>
-GitHubのCodeボタンから選べる「Download ZIP」でもダウンロードはできますが、モデルファイルが入っていません。
+GitHubのCodeボタンから選べる「Download ZIP」でもプログラムをダウンロードはできますが、モデルファイルが入っていません。
 モデルファイルのサイズが大きく、LFSという別の管理になっているためです。
 下記のコマンドで、完全なダウンロード～Pythonへのライブラリのインストールができます。
 
@@ -126,22 +126,45 @@ $ !git clone https://github.com/KatsuhiroMorishita/JPBirdSongClassification.git
 ```
 
 後はローカルと同様に実行できます。
+ただし、コマンドの先頭にエクスクラメーション・マーク「!」が必要です。
 
 </details>
 
 
 ## <div align="center">実行方法</div>
 ### 学習
-半年以内に追記予定
+半年以内に追記予定  
+（注意：まだ学習用のスクリプトは追加していません。）  
+memo
++ ./run/train\*として連番で保存される
++ 設定ファイルと引数により学習係数などを制御可能
++ --retry Trueを引数につけると、前回の学習の続きを実行
+
+<details>
+<summary>学習の実行</summary>
+設定をtrain_setting.yamlに記述する。
+記法は予測の設定と同様です。  
+
+学習処理は、下記のコマンドで実行します。  
+```bash
+$ pyton train.py  
+```
+
+または、  
+```bash
+$ py train.py  
+```
+</details>
 
 ### 予測
+学習後に保存されるモデルファイルを用いて、画像もしくは音声ファイルを用いて予測することができます。
+
 <details open>
 <summary>予測処理の実行</summary>
 設定をpredict_setting.yamlに記述する。
 書式はYAML記法です。
 適当なテキストエディタ―で編集して下さい。
 エディターは色分けしてくれるVSCodeやSublime Textがお勧めです。
-
 デフォルトの設定ファイルを開けば、恐らく使い方は分かります。
 
 予測処理は、下記のコマンドで実行します。  
@@ -161,9 +184,55 @@ $ py predict.py
 <details>
 <summary>予測結果の見方</summary>
 予測結果は、2つのファイルに分けて保存されます。
-1つは一定時間ごとの尤度で、もう1つは一定時間ごとの識別結果です。
-識別結果のファイルには設定ファイルで指定した尤度以上の種の名前が記載されています。
-Excelで開くと、左から音源のパス、切り出し開始時間[秒]、切り出し幅[秒]、尤度もしくは種名、の順で並んでいます。
+「prediction_likelihoods*.csv」は一定時間ごとの尤度を記録しており、もう1つの「prediction_result*.csv」は一定時間ごとの識別結果を記録しています。
+「prediction_result*.csv」の識別結果は、設定ファイルで指定した尤度以上の種の名前が記載されています。
+Excelで開くと、左から音源のパス、切り出し開始時間\[秒\]、切り出し幅\[秒\]、尤度もしくは種名、の順で並んでいます。
+
+
+表 「prediction_likelihoods\*.csv」の例
+
+| fname |   s  |  w   | class0 | class1 |
+| ----  | ---- | ---- | ----   |   ---- |
+|  ファイルのパス1  |  0  |  5  | 0.1 | 0.5 |
+|  ファイルのパス2  |  5  |  5  | 0.2 | 0.3 |
+|  ファイルのパス3  | 10  |  5  | 0.7 | 0.1 |
+
+表 「prediction_result\*.csv」の例
+
+| fname |   s  |  w   | class0 | class1 |
+| ----  | ---- | ---- | ----   |   ---- |
+|  ファイルのパス1  |  0  |  5  | ND     |        |
+|  ファイルのパス2  |  5  |  5  | uguisu |        |
+|  ファイルのパス3  | 10  |  5  | uguisu | karasu |
+
+</details>
+
+
+
+### 評価
+評価結果がどの程度の性能を示しているのか、[AUCやF値](https://tech.ledge.co.jp/entry/metrics)により評価します。
+評価には尤度を保存したファイル「prediction_likelihoods\*.csv」が必要です。
+
+<details>
+<summary>評価処理の実行</summary>
+設定をevaluate_setting.yamlに記述する。
+記法は予測の設定と同様です。
+
+
+学習処理は、下記のコマンドで実行します。  
+```bash
+$ pyton evaluate.py  
+```
+
+または、  
+```bash
+$ py evaluate.py  
+```
+
+処理結果は./runs/evaluate\*に保存されます。
+
+</details>
+
 </details>
 
 
