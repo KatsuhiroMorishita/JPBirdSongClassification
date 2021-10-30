@@ -24,6 +24,17 @@ import yaml
 
 
 
+
+def print2(*args):
+    """ いい感じにstrやdictやlistを表示する
+    """
+    for arg in args:
+        if isinstance(arg, dict) or isinstance(arg, list):
+            pprint.pprint(arg)
+        else:
+            print(arg)
+            
+
 def last_dirnumber(pattern="train"):
     """ 既に保存されている学習・予測フォルダ等の最大の番号を取得
     """
@@ -300,7 +311,7 @@ def print_setting(params):
 def main():
     # 設定を読み込み
     setting = read_setting("evaluate_setting.yaml")
-    print_setting(setting)
+    print2("\n\n< setting >", setting)
 
     # 保存先のフォルダを作る
     save_root_dir = next_dirpath("evaluate")

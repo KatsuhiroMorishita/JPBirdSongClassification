@@ -40,6 +40,18 @@ import libs.sound_image7 as si
 
 
 
+
+
+def print2(*args):
+    """ いい感じにstrやdictやlistを表示する
+    """
+    for arg in args:
+        if isinstance(arg, dict) or isinstance(arg, list):
+            pprint.pprint(arg)
+        else:
+            print(arg)
+
+
 def last_dirnumber(pattern="train"):
     """ 既に保存されている学習・予測フォルダ等の最大の番号を取得
     """
@@ -111,7 +123,7 @@ class Discriminator:
             values = self.label_dict.values()
             if "ND" not in values:
                 self.label_dict[len(self.label_dict)] = "ND"
-            print("label: ", self.label_dict)
+            print2("label: ", self.label_dict)
         
         # 辞書を基に、配列も作成しておく
         label_arr_ = []
@@ -532,20 +544,13 @@ def read_setting(fname):
     return param
 
 
-def print_setting(params):
-    """いい感じに設定内容の辞書を表示する
-    """
-    params_ = copy.deepcopy(params)
-    params_["file_names"] = params_["file_names"][:10]
-    pprint.pprint(params_)
-
 
 
 
 def main():
     # 設定を読み込み
     setting = read_setting("predict_setting.yaml")
-    print_setting(setting)
+    print2("\n\n< setting >", setting)
 
     # 対象ファイルのチェック
     if len(setting["file_names"]) == 0:
