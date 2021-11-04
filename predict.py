@@ -21,6 +21,7 @@
 #  2021-10-28        設定を保存するようにした。また、多数のモデルを指定した場合のバグを修正・フォルダを分けて保存することにも対応した。
 #                    前回の学習結果を使って予測するモードも付けたので、PowerShellなどで学習から予測までを連続的に実施できるようになった。
 #                    （以前からやれていたけど、いちいちモデルのコピーとかしなくていいのでスクリプトがシンプルになるはず）
+#  2021-11-04        GPUの設定方法が変わったようなので、一旦コメントアウト
 # todo:
 #    モデルの保存形式をhdf5からSavedModelに変えたい。少なくとも対応したい。
 # author: Katsuhiro Morishita
@@ -570,14 +571,14 @@ def main():
             exit()
 
     # GPUを使用するか、決める
-    if setting["GPU"]:
-        # GPUを使う場合
-        config = tf.ConfigProto()  # gpu_options=tf.GPUOptions(allow_growth=False))
-        session = tf.Session(config=config)
-        tf.keras.backend.set_session(session)
-    else:
-        # CPUを使う場合
-        os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+    #if setting["GPU"]:
+    #    # GPUを使う場合
+    #    config = tf.ConfigProto()  # gpu_options=tf.GPUOptions(allow_growth=False))
+    #    session = tf.Session(config=config)
+    #    tf.keras.backend.set_session(session)
+    #else:
+    #    # CPUを使う場合
+    #    os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
     # 識別器の準備
     discriminators = []
