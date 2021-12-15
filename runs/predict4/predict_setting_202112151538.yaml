@@ -1,0 +1,25 @@
+﻿GPU: false
+batch_size: 100
+file_names:
+- ./data/sounds\yanbal.wav
+fmax: 22000
+hop: 0.0251
+label_pattern: label*.pickle
+load_mode: kaiser_fast
+mode: sound
+model_format: hdf5
+models:
+- ./models/model202112
+n_fft: 2048
+n_mels: 120
+raw: true
+shift_rate: 1
+size:
+- 200
+- 120
+- 3
+sr: 44100
+targets: []
+th: 0.8
+top_remove: 0
+window_size: 5
