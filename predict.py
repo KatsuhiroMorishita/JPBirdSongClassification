@@ -22,11 +22,13 @@
 #                    前回の学習結果を使って予測するモードも付けたので、PowerShellなどで学習から予測までを連続的に実施できるようになった。
 #                    （以前からやれていたけど、いちいちモデルのコピーとかしなくていいのでスクリプトがシンプルになるはず）
 #  2021-11-04        GPUの設定方法が変わったようなので、一旦コメントアウト
+#  2021-12-11 ver.11 CPUを使いたいことがあるので、予測処理にCPUを使えるように変更。スクリプトに対して引数を指定できるように変更した。
+#  2021-12-15        音源のファイルフォーマットが不正な場合にエラーで止まらないように、try構文を追加した。ログも保存する。
 # todo:
 #    モデルの保存形式をhdf5からSavedModelに変えたい。少なくとも対応したい。
 # author: Katsuhiro Morishita
 # created: 2019-10-29
-import sys, os, re, glob, copy, time, pickle, pprint
+import sys, os, re, glob, copy, time, pickle, pprint, argparse, traceback
 from datetime import datetime as dt
 import numpy as np
 import matplotlib.pyplot as plt
@@ -466,6 +468,35 @@ def read_models(dir_path, img_size, th, model_format="hdf5", label_pattern="labe
 
 
 
+def arg_parse(params):
+    """ 引数の解析と、設定の上書き
+    """
+    parser = argparse.ArgumentParser(description="略")
+
+    # 引数の追加
+    parser.add_argument("-f", "--files")
+    parser.add_argument("-g", "--gpu")
+
+    # 引数を解析
+    args = parser.parse_args()
+
+    # 設定に反映
+    if args.gpu: params["GPU"] = bool(args.gpu)
+    if args.files:    # 処理対象ファイルの指定への対応（現時点ではglobにのみ対応）。スクリプトの引数内では、\は\\としてエスケープすること。
+        value = args.files
+        print("***", value, "***")
+        if "glob.glob" == value[:9]:
+            index = value.find(")")
+            if index > 0:
+                order = value[:index + 1]
+                v = eval(order)
+                params["file_names"] = sorted(v)
+
+    return params
+
+
+
+
 
 
 def set_default_setting():
@@ -551,6 +582,9 @@ def read_setting(fname):
 def main():
     # 設定を読み込み
     setting = read_setting("predict_setting.yaml")
+
+    # 引数のチェック
+    setting = arg_parse(setting)
     print2("\n\n< setting >", setting)
 
     # 対象ファイルのチェック
@@ -571,14 +605,11 @@ def main():
             exit()
 
     # GPUを使用するか、決める
-    #if setting["GPU"]:
-    #    # GPUを使う場合
-    #    config = tf.ConfigProto()  # gpu_options=tf.GPUOptions(allow_growth=False))
-    #    session = tf.Session(config=config)
-    #    tf.keras.backend.set_session(session)
-    #else:
-    #    # CPUを使う場合
-    #    os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+    if setting["GPU"]:
+        pass   # GPUがあれば、勝手に使用される
+    else:
+        # CPUを使う場合
+        os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
     # 識別器の準備
     discriminators = []
@@ -615,11 +646,23 @@ def main():
         fnames = sorted(setting["file_names"])    # 処理対象ファイルをソート
         print(fnames[:10])
 
+        # ファイルを処理
         if setting["mode"] == "sound":       # 音声ファイルを予測
             for fname in fnames:             # 音声ファイルはサイズが大きいので、音声ファイルごとに処理
-                predict_sound(fname, setting, discriminators)  # 予測の実行
+                try:             # たまにエラーが発生するので、その対応
+                    predict_sound(fname, setting, discriminators)  # 予測の実行
+                except Exception as e:
+                    print("### error ###")
+                    # エラー状況をファイルに残す
+                    with open("error_predict.log", "a", encoding="utf-8-sig") as fw:
+                        fw.write("### {} ###\n".format(str(dt.now())))
+                        fw.write(f"{fname}\n")
+                        fw.write(f"cause: {e}\n")
+                        fw.write("{}\n".format(traceback.format_exc()))
         elif setting["mode"] == "image":  # 画像を予測
             predict_images(fnames, setting, discriminators)
+        
+
 
         # ファイルを閉じる
         for dis in discriminators:

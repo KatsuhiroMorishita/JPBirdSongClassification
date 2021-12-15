@@ -35,7 +35,7 @@ batch_size: 100  # 1度に予測する画像枚数。GPU使用で100とかだと
 mode: "sound"   # image or sound
 size: [200, 120, 3]  # 識別機用の画像のサイズ. (width, height, channel)
 file_names: glob.glob(r'./data/sounds/*.wav')   # 識別させたい音源のパス。globで検索できる。
-models: ["./models/model202109"]   # モデルのパス
+models: ["./models/model202112"]   # モデルのパス
 model_format: "hdf5"
 th: 0.8          # 尤度で識別した、と判断する閾値
 
