@@ -1,0 +1,36 @@
+# memo
+# 学習用の設定ファイル
+
+
+# 花のサンプル画像を予測する場合
+image_root: "./data/images/flower_sample"   # 学習したい画像の入っているフォルダ（相対パス）
+image_shape_wh: [50, 50]           # 画像のサイズ。横と縦。
+data_format:  "channels_last"       # チャンネル配置。確か、"channels_last"前提で書いちゃった部分がある。
+class_list:  ["white", "yellow"]    # クラス名の一覧
+ignore_list: ["ignore", "double"]  # ファイルのパスに含まれていたら無視する文字列のリスト。
+exchange_dict:  {}                  # クラス名を置換したい場合に辞書で指定。例：{"gray": "white"}
+model_format: ".hdf5"   # 保存するモデルの形式
+epochs:  20              # 学習する回数（基本的には、全画像と同じ枚数の画像の学習を行うのを単位とする）
+batch_size:  10          # 1回の学習係数の修正に利用する画像数
+initial_epoch:  0        # 初期エポック数（学習を再開させる場合は0以外とする）
+validation_rate:  0.2    # 画像が大量にあるなら0.05程度でも良い。
+lr: 0.001               # 学習係数
+validation_th: 0.5      # 検証データに対する識別精度検証に使う尤度の閾値
+cp_period: 5            # 学習途中にモデルを保存する周期。5なら5 epochごとに保存する。
+leranig_layerid: 16     # このレイヤー以降の結合係数を更新する。初回の学習は大きく、２回目は6が推奨。
+
+
+# Image Data Generatorのためのパラメータ
+datagen_params:
+   random_erasing: [0.2, [0.02, 0.25]]    # 確率、箱の大きさの範囲
+   mixup: [0.3, 3, null]         # 確率、合成する画像数、無視するラベル。nullはPython内ではNone扱いとなる。
+   width_shift_range: 1.0                 # 横方向のシフト率
+   height_shift_range: [0.05, True]       # 縦方向のシフト率、上端セルを無視するかどうか
+   #shape: shape
+   brightness_shift_range: 0.1           # 輝度の変化
+   bright_line: [[1.5, 2, 0.2]]          # 輝線のパラメータ. 強度、方向（縦・横）、確率
+   scratch: [0.8, 5, 0.2]                # 引っかき傷（1本の縦線）のパラメータ。強度、線の最大数、確率
+   noise_std: 0.03
+   freq_filter: [[0.97, 10, 0.05, "high_pass", 0.05, 0.2, 0], 
+                 [0.15, 15, 0.05, "low_pass", 0.15, 0.2, 0]]   # 周波数フィルタのパラメータ。位置0-1、ピクセル幅、最小値0-1、種類、変動の大きさ、確率、無視する行のインデックス
+   back_ground: [0.3, 0.3]    # 確率、背景強度
