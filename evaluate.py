@@ -9,6 +9,7 @@
 #   2021-03-09 ver.3v2 v3で実装した処理の高速化。numbaを使う。
 #   2021-04-05 ver.4  複数のファイルを処理できるように改造（他のファイルから処理を呼び出しやすくもなった）
 #   2021-10-28        設定の読み込みをより安全にした。また、結果の保存先を変更した。サンプル用だが、ファイル名だけでの比較にも対応した。
+#   2022-01-06        yamlの保存をunicode形式に変更。
 # author: Katsuhiro Morishita
 # created: 2020-04-27
 # license: MIT. If you use this program for your study, you should write Acknowledgement in your paper.
@@ -321,7 +322,7 @@ def main():
     now_ = dt.now().strftime('%Y%m%d%H%M')
     fname = os.path.join(save_root_dir, "evaluate_setting_{}.yaml".format(now_))
     with open(fname, 'w', encoding="utf-8-sig") as fw:
-        yaml.dump(setting, fw)
+        yaml.dump(setting, fw, encoding='utf8', allow_unicode=True)
 
 
     for fpath in setting["likelihood_files"]:

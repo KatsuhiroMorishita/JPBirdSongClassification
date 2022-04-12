@@ -24,6 +24,7 @@
 #  2021-11-04        GPUの設定方法が変わったようなので、一旦コメントアウト
 #  2021-12-11 ver.11 CPUを使いたいことがあるので、予測処理にCPUを使えるように変更。スクリプトに対して引数を指定できるように変更した。
 #  2021-12-15        音源のファイルフォーマットが不正な場合にエラーで止まらないように、try構文を追加した。ログも保存する。
+#  2022-01-06        sound_image8に変更。 yamlの保存をunicode形式に変更。
 # todo:
 #    モデルの保存形式をhdf5からSavedModelに変えたい。少なくとも対応したい。
 # author: Katsuhiro Morishita
@@ -38,8 +39,7 @@ import tensorflow as tf
 from tensorflow.keras.models import load_model
 import yaml
 
-import libs.sound_image7 as si
-
+import libs.sound_image8 as si
 
 
 
@@ -284,11 +284,105 @@ def preprocessing(img, size):
     #img2.save('img2.png')            # for debug
     img3 = np.asarray(img2)
     
-    # チャンネル数の調整（これでできるのはchannel_lastの構造となった画像）
+    # チャンネル数の調整（これでできるのはchannels_lastの構造となった画像）
     img4 = np.dstack([img3] * c)  # img3が2次元配列の画像（チャンネルがない）ことを前提に、チャンネル分重ねる
 
     # 画素の輝度値を最大1.0とする
     return img4 / 255
+
+
+
+def preprocessing2(img, size):
+    """ 画像の前処理（リサイズなど）を行い、前処理済みの画像を格納した配列をndarray型で返す
+    img: ndarray, 画像1枚分のndarray型オブジェクト. 輝度値が0-255であること。画像は2次元配列でチャンネルがないことを前提とする。
+    size: tuple<int, int, int>, 画像のサイズ(Width, Height, channel)
+    """
+    w, h, c = size
+
+    # リサイズ
+    pil_img = Image.fromarray(img)    # リサイズできるように、pillowのImageに変換
+    img2 = pil_img.resize((w, h))  # リサイズ。リサイズにはチャンネルの情報は不要
+    #img2.save('img2.png')            # for debug
+    img3 = np.asarray(img2)
+    
+    # （これでできるのはchannels_lastの構造となった画像）
+    img4 = preprocessing3(img3, None)  # img3が2次元配列の画像（チャンネルがない）ことを前提に、チャンネル分重ねる
+
+    # 画素の輝度値を最大1.0とする
+    return img4 / 255
+
+
+
+# image_preprocessing11.pyより移植
+def preprocessing3(img, params):
+    """ RGB画像であることを前提に、BとGに一様勾配の画像を挿入する。
+    img: ndarray type image
+    """
+    shape = img.shape
+    #print(shape)
+    
+    # 画像サイズの取得
+    if len(shape) == 3:
+        channel = params["data_format"]
+        if channel == "channels_first":
+            z, h, w = shape
+        else:
+            h, w, z = shape
+    elif len(shape) == 2:   # 2次元だったら
+        h, w = shape
+        z = 3
+
+        # チャンネル数の調整（これでできるのはchannels_lastの構造となった画像）
+        img = np.dstack([img] * 3)  # imgが2次元配列の画像（チャンネルがない）ことを前提に、チャンネル分重ねる
+        channel = "channels_last"
+    #print(channel)
+
+    # 輝度最大値を決める
+    max_ = np.max(img)
+    if max_ > 1:
+        a = 255
+    else:
+        a = 1
+    #print(max_)
+
+    # 単純な輝度購買の2次元画像を作成
+    x = np.linspace(0, a, h)     # 等差数列を作成
+    m1 = np.tile(x, (w, 1))       # 2次元配列に加工
+    m1 = m1.T    # 横に倒す
+
+    x = np.linspace(0, a, w)     # 等差数列を作成
+    m2 = np.tile(x, (h, 1))       # 2次元配列に加工
+
+    # channels_firstに変換
+    if channel == "channels_last":
+        img = img.transpose(2, 0, 1)
+        #print("hoge")
+    #print(img.shape)
+
+
+    # GとBのレイヤーごと、差し替え
+    img[1] = m1
+    img[2] = m2
+    img = np.array(img)
+
+    # channels_lastに変換
+    if channel == "channels_last":
+        img = img.transpose(1, 2, 0)
+
+
+    return img
+
+
+# test of preprocessing3
+"""
+im = Image.new("RGB", (300, 500), (10, 100, 200))
+im = np.array(im)
+im = preprocessing3(im, {"data_format": "channels_last"})
+im = Image.fromarray(im)
+im.save("hoge.png")
+exit()
+"""
+
 
 
 
@@ -633,7 +727,7 @@ def main():
     now_ = dt.now().strftime('%Y%m%d%H%M')
     fname = os.path.join(save_dir, "predict_setting_{}.yaml".format(now_))
     with open(fname, 'w', encoding="utf-8-sig") as fw:
-        yaml.dump(setting, fw)
+        yaml.dump(setting, fw, encoding='utf8', allow_unicode=True)
 
     
     # 識別器があれば、処理開始

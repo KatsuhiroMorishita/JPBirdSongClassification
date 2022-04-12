@@ -15,17 +15,16 @@
 #  2021-03-09       cut_bandとemphasize_bandを併用するとちぐはぐな画像となってたので、スケーリングの順序を変更した。バージョンはそのまま。
 #  2021-03-27       extendを選んだ際にどこまで画像として出力するか、指定している部分の計算ミスを修正した。バージョンはそのまま。
 #  2021-07-28 ver.7 変数名の意味が合わないので、overlap_rateをshift_rateに変更した。
+#  2021-11-20       保存フォルダを自動で作成するように変更した
+#  2021-12-07 ver.8 locaiton判別にて、B1などに対応。アルファベットもABCDX以外にも対応した。
 # created: 2019-01-31      
-import glob
-import os
-import re
+import os, re, glob
 import hashlib
 import librosa
 import librosa.display
 import numpy as np
 from PIL import Image, ImageOps
 import copy
-import glob
 import unicodedata   # MacとWindowsのファイル名の扱いの違いを吸収するために使う
 
 
@@ -409,18 +408,14 @@ def get_location_ID(file_path):
     単純なので画像ファイルの区別には便利だが、単純すぎたのでIDだけでは録音年度を特定できないので注意して欲しい。
     """
     file_path = os.path.abspath(file_path)
-
     location = "unknown"
-    if "location_A" in file_path:
-        location = "A"
-    elif "location_B" in file_path:
-        location = "B"
-    elif "location_C" in file_path:
-        location = "C"
-    elif "location_D" in file_path:
-        location = "D"
-    elif "location_X" in file_path:
-        location = "X"
+    
+    # location_Aやlocation_B1などを判別
+    p = r"location_(?P<loc>[A-Z]+\d*)"
+    m = re.search(p, file_path)
+    if m:
+        location = m.group("loc")
+
 
     # CDの音源ファイルを区別するために、locationをフォルダ名から作る
     if location == "unknown":
@@ -494,9 +489,15 @@ def set_default_setting():
 def main():
     # 設定を読み込み
     setting = set_default_setting()
-    setting = read_setting("sound_image_setting7.txt", setting)
+    setting = read_setting("sound_image_setting8.txt", setting)
     fnames = sorted(setting["file_names"])
     print(fnames)
+
+    
+    # 保存先の作成
+    root = setting["root"]
+    if root != "":
+        os.makedirs(root, exist_ok=True) 
 
     # 処理対象のファイルのパスをリストで取得し、一つずつ処理
     for fname in fnames:
