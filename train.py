@@ -7,11 +7,19 @@
 #  2022-01-06 mlcore11とimage_preprocessing9に変更。これで教師数が少ないクラスがあってもエラーにはならない。yamlの保存をunicode形式に変更。
 #  2022-01-09 警告が出ていたので、ModelCheckpoint()の引数periodをsave_freqに変更。
 #             fit()に渡すImageDataGeneratorをマルチコア対応のものに差し替えた。メモリが不足して使えないが。
-# todo:
-#    モデルの保存形式をhdf5からSavedModelに変えたい。少なくとも対応したい。
+#  2022-11-06 mlcore14, image_preprocessing12に切り替え
+#  2022-12-20 mlcore15, image_preprocessing13に切り替え
+#  2022-12-23 mlcore16, image_preprocessing14に切り替え
+#  2023-05-23 SavedModel形式の読み込みに対応にともない、mlcore17, image_preprocessing15に切り替え
+#  2023-08-05 設定ファイルの読み込み時の対応を少し変えた。中途半端かも。
+#  2023-08-30 教師データを格納したフォルダのパス確認を追加
+#  2023-10-02 mlcore18.pyのplot_history()とsave_history()の修正に対応. Ubuntu対応のために、パスの区切り文字を/に変更。
+#             predict.pyの保存フォルダに名前を付ける機能に対応して、last_dirnumber(), last_dirpath(), next_dirpath()を修正。
+#  2023-10-11 build_model_local()内でのモデル作成方法を変更（試し）
+#  2023-11-18 モデル作成方法がうまくいっていなかったので、再修正（うまくいった）
 # author: Katsuhiro MORISHITA　森下功啓
 # created: 2021-10-18
-import sys, os, re, glob, copy, time, pickle, pprint, argparse
+import sys, os, re, glob, copy, time, pickle, pprint, argparse, ast
 from datetime import datetime as dt
 import tensorflow as tf
 from tensorflow.keras import regularizers
@@ -29,8 +37,8 @@ import gc
 import cv2
 import yaml
 
-from libs.mlcore13 import *
-import libs.image_preprocessing11 as ip
+from libs.mlcore18 import *
+import libs.image_preprocessing15 as ip
 
 
 
@@ -49,43 +57,48 @@ def print2(*args):
             print(arg)
 
 
-def last_dirnumber(pattern="train", root=r'.\runs'):
+def last_dirnumber(pattern="train", root=r'./runs'):
     """ 既に保存されている学習・予測フォルダ等の最大の番号を取得
     root: str, 探索するディレクトリへのパス
     """
-    path = root
-    dirs = os.listdir(path=path)
-    numbers = [0]
+    path_dir = ""
+    dirs = os.listdir(path=root)
+
+    max_ = 0
     for d in dirs:
-        if os.path.isdir(os.path.join(path, d)):
-            m = re.search(r"{}(?P<num>\d+)".format(pattern), d)
+        path_dir_ = os.path.join(root, d)
+        if os.path.isdir(path_dir_):
+            m = re.match(r"{}(?P<num>\d+)".format(pattern), d)
             if m:
-                numbers.append(int(m.group("num")))
-    max_ = max(numbers)
+                num = int(m.group("num"))
+                if max_ < num:
+                    max_ = num
+                    path_dir = path_dir_
+                
+    return max_, root, path_dir
 
-    return max_, path
 
-
-def last_dirpath(pattern="train", root=r'.\runs'):
+def last_dirpath(pattern="train", root=r'./runs'):
     """ 最大の番号を持つ既に保存されている学習・予測フォルダ等のパスを返す
+    root: str, 探索するディレクトリへのパス
     """
-    max_, path = last_dirnumber(pattern, root)
-    return os.path.join(path, pattern + str(max_)) 
+    max_, path_root, path_dir = last_dirnumber(pattern, root)
+    return path_dir
 
 
-def next_dirpath(pattern="train", root=r'.\runs'):
+def next_dirpath(pattern="train", root=r'./runs'):
     """ 学習・予測フォルダ等を新規で作成する場合のパスを返す
+    root: str, 探索するディレクトリへのパス
     """
-    max_, path = last_dirnumber(pattern, root)
-    return os.path.join(path, pattern + str(max_ + 1)) 
+    max_, path_root, path_dir = last_dirnumber(pattern, root)
+    return os.path.join(path_root, pattern + str(max_ + 1)) 
 
 
 
-
-
-def build_model_local(input_shape, output_dim, data_format):
+def build_model_local(input_shape, output_dim, data_format, loss='binary_crossentropy'):
     """ 機械学習のモデルを作成する
     入力は画像、出力はラベルという構造を想定しています。
+    loss: 損失関数。多クラス多ラベル分類問題の場合、通常はbinary_crossentropyを使う
     """
     print("input_shape", input_shape)
     base_model = VGG16(include_top=False, weights='imagenet', input_shape=input_shape)
@@ -102,10 +115,43 @@ def build_model_local(input_shape, output_dim, data_format):
         layer.trainable = False    # Falseで更新しない
 
     model = Model(inputs=base_model.input, outputs=top_model(base_model.output))
-    opt = Adam(lr=0.0001, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.0003) # 最適化器のセット。lrは学習係数
-    #opt = SGD(lr=0.00001, momentum=0.9)
+    opt = Adam(learning_rate=0.0001, beta_1=0.9, beta_2=0.999, epsilon=1e-08) # 最適化器のセット。lrは学習係数. , decay=0.0003はtensorflow2.12では不要
+    #opt = SGD(learning_rate=0.00001, momentum=0.9)
     model.compile(optimizer=opt,           # コンパイル
-        loss='binary_crossentropy',   # 損失関数は、多クラス多ラベル分類問題なのでbinary_crossentropyを使う
+        loss=loss,   # 損失関数
+        metrics=['accuracy'])
+    print(model.summary())
+    return model
+
+
+
+
+def build_model_local2(input_shape, output_dim, data_format, loss='binary_crossentropy'):
+    """ 機械学習のモデルを作成する
+    入力は画像、出力はラベルという構造を想定しています。
+    build_model_localに対して、モデルの作り方が異なります。
+    恐らく出力層1つ前の出力を取り出すならこちらが簡単だと思う。
+    loss: 損失関数。多クラス多ラベル分類問題の場合、通常はbinary_crossentropyを使う
+    """
+    print("input_shape", input_shape)
+    base_model = VGG16(include_top=False, weights='imagenet', input_shape=input_shape)
+
+    x = base_model.output
+    x = Flatten()(x)
+    x = Dense(100, activation='relu', kernel_regularizer=regularizers.l2(0.001))(x)
+    x = Dropout(0.5)(x)
+    x = Dense(output_dim)(x)    # 出力層のユニット数はoutput_dim個
+    x = Activation('sigmoid')(x)
+    model = Model(inputs=base_model.input, outputs=x)
+
+    #fix weights of base_model
+    for layer in base_model.layers:
+        layer.trainable = False    # Falseで更新しない
+
+    opt = Adam(learning_rate=0.0001, beta_1=0.9, beta_2=0.999, epsilon=1e-08) # 最適化器のセット。lrは学習係数. , decay=0.0003はtensorflow2.12では不要
+    #opt = SGD(learning_rate=0.00001, momentum=0.9)
+    model.compile(optimizer=opt,           # コンパイル
+        loss=loss,   # 損失関数
         metrics=['accuracy'])
     print(model.summary())
     return model
@@ -149,7 +195,7 @@ def set_default_setting():
     params["class_list"] = ["white", "yellow"]    # クラス名の一覧
     params["ignore_list"] = ["ignore", "double"]  # ファイルのパスに含まれていたら無視する文字列のリスト。
     params["exchange_dict"] = {}                  # クラス名を置換したい場合に辞書で指定。例：{"gray": "white"}
-    params["model_format"] = ".hdf5"   # 保存するモデルの形式
+    params["model_format"] = ".hdf5"   # 保存するモデルの形式. "SavedModel" or ".hdf5"
     params["epochs"] = 20              # 1つの画像当たりの学習回数
     params["batch_size"] = 10          # 1回の学習係数の修正に利用する画像数
     params["initial_epoch"] = 0        # 初期エポック数（学習を再開させる場合は0以外とする）
@@ -162,7 +208,8 @@ def set_default_setting():
     params["datagen_params"] = {}           # image data generatorへの指示パラメータ
     params["mixup_ignores"] = ["silence"]   # mixupで無視するクラス名
     params["retry"] = False                 # 前回の学習から続ける場合はTrue
-
+    params["custom_objects"] = {}      # 独自の活性化関数や損失関数を格納するカスタムオブジェクト
+    params["onnx_output"] = True       # onnx形式でのモデル保存を実行する場合、True
     return params
 
 
@@ -175,23 +222,42 @@ def read_setting(fname):
     with open(fname, "r", encoding="utf-8-sig") as fr:
         obj = yaml.safe_load(fr)
         
-        for key, value in obj.items():
-            # globを使ったファイル検索命令への対応
-            if isinstance(value, str) and "glob.glob" == value[:9]:
-                index = value.find(")")
-                if index > 0:
-                    order = value[:index + 1]
-                    v = eval(order)
-                    obj[key] = v
+        if obj is not None:
+            for key, value in obj.items():
+                # globを使ったファイル検索命令への対応
+                if isinstance(value, str) and "glob.glob" == value[:9]:
+                    index = value.find(")")
+                    if index > 0:
+                        order = value[:index + 1]
+                        v = eval(order)
+                        obj[key] = v
 
-            # 単なるlistがあれば、tupleにしておく
-            #if isinstance(value, list):
-            #    obj[key] = tuple(value)
-        param.update(**obj)   # 辞書の結合 （Python 3.9以降なら記述を簡単にできる）
+                # 単なるlistがあれば、tupleにしておく
+                #if isinstance(value, list):
+                #    obj[key] = tuple(value)
+            param.update(**obj)   # 辞書の結合 （Python 3.9以降なら記述を簡単にできる）
 
     # このモジュール特有の処理
     ## クラスの重複対応
     param["class_sets"] = set(param["class_list"])  # もし重複があっても排除
+
+
+    # lossの処理
+    if "local." == param["loss"][:6]:
+        # "local.hogehoge_func,{a=10}"の様な文字列を想定
+        lossName_lossParam = param["loss"][6:]            # 先頭文字列を削る
+        func_name, loss_param_str = lossName_lossParam.split(",", 1)   # 分割
+        func_name = func_name.strip()
+        loss_param_str = loss_param_str.strip()
+        func_name = func_name[:30]                       # 関数名の文字数制限
+        loss_param = ast.literal_eval(loss_param_str)    # 辞書オブジェクトに変換
+
+        loss_function = gen_custom_loss(func_name, loss_param)
+        param["loss"] = loss_function
+        #print("------------------------", func_name, param["loss"])
+
+        # カスタムオブジェクトとしても登録しておく
+        param["custom_objects"][func_name] = loss_function
 
     return param
 
@@ -214,11 +280,16 @@ def main():
         raise ValueError("epochs <= initial_epoch")
 
 
+    # 教師データの存在チェック
+    if not os.path.exists(setting["image_root"]):
+        raise ValueError("Teacher image data directory is not exists. Please check your setting.")
+
+
     # 教師データの読み込みと、モデルの構築。必要なら、callbackで保存していた結合係数を読み込む
     if setting["retry"]:
         # 学習を再開させる場合
         save_dir = last_dirpath("train")   # （前回の、そして今回の）結果の保存先
-        x_train, y_train, x_test, y_test, weights_dict, label_dict, model = reload(load_dir=save_dir)
+        x_train, y_train, x_test, y_test, weights_dict, label_dict, model = reload(load_dir=save_dir, custom_objects=setting["custom_objects"], model_format=setting["model_format"])
         test_file_names = restore(['test_names.pickle'], load_dir=save_dir)[0]   # 1つしか無いがlistで返ってくるので[0]で取り出す
     else:
         save_dir = next_dirpath("train")      # 結果の保存先
@@ -245,10 +316,12 @@ def main():
         if "--load_model" in sys.argv:
             # モデルだけを読み込む（保存されたモデルに対し、クラスが変化（増えたり減ったり入れ替わったり）なければ動く）
             last_dir = last_dirpath("train")   # 前回の結果の保存先
-            model = reload(load_names=[], with_model=True, load_dir=last_dir)[0]
+            model = reload(load_names=[], with_model=True, load_dir=last_dir, custom_objects=setting["custom_objects"])[0]
         else:
             # モデルの新規作成
-            model = build_model_local(input_shape=x_train.shape[1:], output_dim=output_dim, data_format=data_format)   # モデルの作成
+            model = build_model_local2(input_shape=x_train.shape[1:], 
+                                      output_dim=output_dim, 
+                                      data_format=data_format)   # モデルの作成
     
 
     # 諸々を確認のために表示
@@ -270,7 +343,7 @@ def main():
 
     # re-compile
     model.compile(optimizer=SGD(learning_rate=setting["lr"], momentum=0.9),    # コンパイル
-            loss=setting["loss"],   # 損失関数は、多クラス多ラベル分類問題なのでbinary_crossentropyを使う
+            loss=setting["loss"],   # 損失関数
             metrics=['accuracy'])
 
 
@@ -295,6 +368,7 @@ def main():
         dg_param["mixup"][2] = invalid_label
     
     datagen_train = ip.MyImageDataGenerator(**dg_param)   # 学習用
+    dg_param["label_smoothing_e"] = 0.0                         # 検証データではラベルスムージングは無し
     datagen_validation = ip.MyImageDataGenerator(**dg_param)    # 検証用
 
 
@@ -346,8 +420,18 @@ def main():
     model.save(os.path.join(save_dir, "model{}".format(setting["model_format"])))    # 獲得した結合係数を保存
     report_path = next_dirpath("report", root=save_dir)   # 細かいレポートはサブフォルダに保存（retryへの対応）
     os.makedirs(report_path, exist_ok=True)  # 保存先のフォルダを作成
-    plot_history(history, show_flag=False, save_name=os.path.join(report_path, "loss_history.png"))       # lossの変化をグラフで表示
-    save_history(os.path.join(report_path, "loss_history.csv"), history, mode="a")
+    plot_history(history, show_flag=False, save_name=os.path.join(report_path, "history.png"))       # lossの変化をグラフで表示
+    save_history(os.path.join(report_path, "history.csv"), history, mode="a")
+
+    # onnx形式での保存 (https://qiita.com/studio_haneya/items/be9bc7c56af44b7c1e0a)
+    if setting["onnx_output"]:
+        import tf2onnx, onnx
+        model_path = os.path.join(save_dir, "model.onnx")
+        input_signature = [tf.TensorSpec([None] + list(x_train.shape[1:]), tf.float32, name='x')]
+        onnx_model, _ = tf2onnx.convert.from_keras(model, input_signature)  # 引数のopsetは2023-05時点では15がデフォルトらしい。ここでは省略する。
+        onnx.save(onnx_model, model_path)
+
+
 
     # 学習成果のチェックとして、検証データに対して分割表を作成し、正解・不正解のリストをもらう
     checked_list = check_validation(0.15, model, x_test, y_test, label_dict, 

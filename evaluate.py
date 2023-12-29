@@ -10,6 +10,10 @@
 #   2021-04-05 ver.4  複数のファイルを処理できるように改造（他のファイルから処理を呼び出しやすくもなった）
 #   2021-10-28        設定の読み込みをより安全にした。また、結果の保存先を変更した。サンプル用だが、ファイル名だけでの比較にも対応した。
 #   2022-01-06        yamlの保存をunicode形式に変更。
+#   2022-12-14        既存のフォルダ探索に使う正規表現でsearchからmatchに変更した。これで文字列先頭の一致をチェックするようにした。
+#   2023-01-12        感度も求めるように変更して、PR曲線とその曲線化の面積を求めるように変更
+#   2023-01-13        numbaで高速化した部分で、parallel=Trueとするとエラーになるので、Falseに変更した（20倍くらい遅くなるかな）
+#   2023-10-02        predict.pyの保存フォルダに名前を付ける機能に対応して、last_dirnumber(), last_dirpath(), next_dirpath()を修正。
 # author: Katsuhiro Morishita
 # created: 2020-04-27
 # license: MIT. If you use this program for your study, you should write Acknowledgement in your paper.
@@ -36,34 +40,41 @@ def print2(*args):
             print(arg)
             
 
-def last_dirnumber(pattern="train"):
+def last_dirnumber(pattern="train", root=r'./runs'):
     """ 既に保存されている学習・予測フォルダ等の最大の番号を取得
+    root: str, 探索するディレクトリへのパス
     """
-    path = r'.\runs'
-    dirs = os.listdir(path=path)
-    numbers = [0]
+    path_dir = ""
+    dirs = os.listdir(path=root)
+
+    max_ = 0
     for d in dirs:
-        if os.path.isdir(os.path.join(path, d)):
-            m = re.search(r"{}(?P<num>\d+)".format(pattern), d)
+        path_dir_ = os.path.join(root, d)
+        if os.path.isdir(path_dir_):
+            m = re.match(r"{}(?P<num>\d+)".format(pattern), d)
             if m:
-                numbers.append(int(m.group("num")))
-    max_ = max(numbers)
+                num = int(m.group("num"))
+                if max_ < num:
+                    max_ = num
+                    path_dir = path_dir_
+                
+    return max_, root, path_dir
 
-    return max_, path
 
-
-def last_dirpath(pattern="train"):
+def last_dirpath(pattern="train", root=r'./runs'):
     """ 最大の番号を持つ既に保存されている学習・予測フォルダ等のパスを返す
+    root: str, 探索するディレクトリへのパス
     """
-    max_, path = last_dirnumber(pattern)
-    return os.path.join(path, pattern + str(max_)) 
+    max_, path_root, path_dir = last_dirnumber(pattern, root)
+    return path_dir
 
 
-def next_dirpath(pattern="train"):
+def next_dirpath(pattern="train", root=r'./runs'):
     """ 学習・予測フォルダ等を新規で作成する場合のパスを返す
+    root: str, 探索するディレクトリへのパス
     """
-    max_, path = last_dirnumber(pattern)
-    return os.path.join(path, pattern + str(max_ + 1)) 
+    max_, path_root, path_dir = last_dirnumber(pattern, root)
+    return os.path.join(path_root, pattern + str(max_ + 1)) 
 
 
 
@@ -154,12 +165,8 @@ class DetectChecker:
 
 
 
-
-
-
-
 # if文とPythonのsum()を排除して1000倍速、さらにnumbaの力で20倍で、トータル1万倍速くなった。
-@njit("f8[:,:](bool_[:], f8[:], f8[:])", parallel=True)
+@njit("f8[:,:](bool_[:], f8[:], f8[:])", parallel=False)   # Trueとすると、いつの間にかエラーになるようになった…
 def check_amount(true, score, thresholds):
     """ AUC計算の検算
     true: ndarray<bool>, 真値の入った一次元配列
@@ -220,14 +227,14 @@ def check_amount(true, score, thresholds):
 
     # 結果を返すために、すべての配列をまとめる（2次元配列になる）
     hoge = np.vstack((fpr, tpr, tp, p, pp, fp, n, P, F))
-    
+
     return hoge
 
 
 
 def check_amount0(true, score, thresholds):
     t = time.perf_counter()
-    a = check_amount(true.astype(np.bool), score, thresholds)
+    a = check_amount(true.astype(np.bool_), score, thresholds)
 
     # DataFrameへ格納（DataFrameへのappendは時間がかかるので、配列で列単位で入れる）
     df = pd.DataFrame({'fpr2': a[0], 
@@ -241,6 +248,7 @@ def check_amount0(true, score, thresholds):
                        "F値": a[8],
                        }
                      )
+    df["感度R"] =  df["TP"] / df["真に陽性の数 TP+FN"]
 
     print('Elapsed:', time.perf_counter() - t)
 
@@ -263,6 +271,7 @@ def set_default_setting():
     params["margin"] = 10            # 正解扱いする範囲を広げるマージン
     params["basename_use"] = False   # ファイル名だけで、正解と予測結果を突き合わせるならTrue。フルパス推奨なのでFalseがデフォルト。
     params["last_predict_use"] = False  # 最後の予測フォルダ内の結果を使うならTrue
+    params["path_replace"] = None
     return params
 
 
@@ -294,8 +303,8 @@ def read_setting(fname):
     ## 最後の予測フォルダの結果の利用を指示されていた場合、最後のフォルダ内のファイルを再帰的に探す。
     if param["last_predict_use"]:
         last_dir = last_dirpath("predict")
-        param["likelihood_files"] += glob.glob(last_dir + "/prediction_likelihoods*.csv") + \
-                                     glob.glob(last_dir + "/**/prediction_likelihoods*.csv")
+        param["likelihood_files"] = glob.glob(last_dir + "/prediction_likelihoods*.csv") + \
+                                    glob.glob(last_dir + "/**/prediction_likelihoods*.csv")
 
     return param
 
@@ -339,17 +348,27 @@ def main():
 
         # 予測結果の尤度データを読み込み
         df = read_likelihoods(fpath, basename=setting["basename_use"])   # 予測結果を読み込み
-        path_change = lambda x: x.replace("\\", "/")
-        df["fname"] = df["fname"].map(path_change)  # ファイルのパスの表記を統一
+        path_change1 = lambda x: x.replace("/", "\\")
+        df["fname"] = df["fname"].map(path_change1)  # ファイルのパスの表記を統一
+
+        # 必要ならパス名を置換する
+        if setting["path_replace"] is not None:
+            a, b = setting["path_replace"]
+            path_change2 = lambda x: x.replace(a, b)
+            df["fname"] = df["fname"].map(path_change2)  # ファイルのパスの表記を統一
+
+        #print(df["fname"].head())
+
+        # 評価対象の列データを取り出す
         y_score = df[setting["tag"]].values       # 予想された尤度。tagの列をndarray型で取り出す
         
         # 正解の区間リスト読み込み
         time_dict = read_list(setting["list_name"], basename=setting["basename_use"])
         file_paths = list(time_dict.keys())          # ファイルのパスの表記を統一するために、キー（ファイルのパス）を取り出す
         for path in file_paths:
-            time_dict[path_change(path)] = time_dict.pop(path)
+            time_dict[path_change1(path)] = time_dict.pop(path)
             #print("path:         ", path)
-            #print("changed path: ", path_change(path))
+            #print("changed path: ", path_change1(path))
 
         # 予測結果に合わせて、正解を作成
         checker = DetectChecker(time_dict)
@@ -379,45 +398,78 @@ def main():
         print(sum(y_true))
 
         
-        # AUCの計算
+        # ROC-AUCの計算
         fpr, tpr, thresholds = roc_curve(y_true, y_score, pos_label=1)   # ftr: false_positive,  tpr: true_positive
-        auc_value = auc(fpr, tpr)
+        roc_auc = auc(fpr, tpr)
+        print("roc_auc", roc_auc)
 
-        # AUCの計算の検算
+        # ROC-AUCの計算の検算
         df_checked = check_amount0(y_true, y_score, thresholds)
+        print("df_checked is generated.")
         
-        # AUCの保存 
-        with open(os.path.join(save_dir, "auc_result.txt"), "w", encoding="utf-8-sig") as fw:
-            fw.write("auc,{}".format(auc_value))
+        # ROC-AUCの保存 
+        with open(os.path.join(save_dir, "ROC-AUC_result.txt"), "w", encoding="utf-8-sig") as fw:
+            fw.write("auc,{}".format(roc_auc))
         
         # fpr, tprをpandasで保存
         df_roc = pd.DataFrame({'th': thresholds, 'fpr': fpr, 'tpr': tpr})  # 格納順はExcelでのグラフを作りやすいように決めた。
         df_roc = pd.concat([df_roc, df_checked], axis=1)    # DataFrameの結合
-        df_roc.to_excel(os.path.join(save_dir, "ROC_curve.xlsx"), index=False)
+        df_roc.to_excel(os.path.join(save_dir, "data.xlsx"), index=False)
         print(df_roc)
 
         # fpr, tprの散布図（ROC曲線）を保存
-        plt.scatter(fpr, tpr, marker='o', label='ROC curve (area = {0:.2f})'.format(auc_value))
+        plt.scatter(fpr, tpr, marker='o', label='ROC curve (area = {0:.2f})'.format(roc_auc))
         plt.xlabel('FPR: False positive rate')
         plt.ylabel('TPR: True positive rate')
         plt.legend()
         plt.grid()
-        plt.savefig(os.path.join(save_dir, 'sklearn_roc_curve.png'))
+        plt.savefig(os.path.join(save_dir, 'ROC_curve.png'))
         if setting["graph_show"]:
             plt.show()
         plt.clf()
         
         # fpr, tprのグラフを保存
-        plt.scatter(thresholds, tpr, marker='o', label='tpr')
-        plt.scatter(thresholds, fpr, marker='o', label='fpr')
+        plt.scatter(thresholds, tpr, marker='o', label='TPR')
+        plt.scatter(thresholds, fpr, marker='o', label='FPR')
         plt.xlabel('thresholds')
         plt.ylabel('rate')
         plt.legend()
         plt.grid()
-        plt.savefig(os.path.join(save_dir, 'sklearn_tpr_fpr_curve.png'))
+        plt.savefig(os.path.join(save_dir, 'FPR_TPR_thresholds.png'))
         if setting["graph_show"]:
             plt.show()
         plt.clf()
+
+
+        # 適合率P・感度（再現率）Recallの散布図（PR曲線）を保存
+        P = df_roc["適合率P"].values
+        R = df_roc["感度R"].values      # 感度は再現率ともいう
+        pr_auc = auc(R, P)
+        plt.scatter(R, P, marker='o', label='PR curve (area = {0:.2f})'.format(pr_auc))
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        plt.legend()
+        plt.grid()
+        plt.savefig(os.path.join(save_dir, 'PR_curve.png'))
+        if setting["graph_show"]:
+            plt.show()
+        plt.clf()
+
+        # 適合率P・感度Recallのグラフを保存
+        plt.scatter(thresholds, P, marker='o', label='Precision')
+        plt.scatter(thresholds, R, marker='o', label='Recall')
+        plt.xlabel('thresholds')
+        plt.ylabel('rate')
+        plt.legend()
+        plt.grid()
+        plt.savefig(os.path.join(save_dir, 'Precision_Recall_thresholds.png'))
+        if setting["graph_show"]:
+            plt.show()
+        plt.clf()
+
+        # PR-AUCの保存 
+        with open(os.path.join(save_dir, "PR-AUC_result.txt"), "w", encoding="utf-8-sig") as fw:
+            fw.write("auc,{}".format(pr_auc))
 
         
         # F値を求める（ただし、閾値がテキトーなときは参考に留めること）
