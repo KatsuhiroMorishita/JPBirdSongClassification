@@ -11,7 +11,7 @@ file_names: glob.glob(r'./data/sounds/*.wav')
 # その他の設定
 mode: "sound"   # image or sound
 size: [200, 120, 3]  # 識別機用の画像のサイズ. (width, height, channel)
-models: "./models/moel20231216/modelSavedModel"   # モデルの選択
+models: ["./models/model20231216"]   # モデルの選択
 model_format: "SavedModel"   # 保存するモデルの形式. "SavedModel" or ".hdf5"
 th: 0.5          # 尤度で識別した、と判断する閾値
 loss: "local.focal_loss"    # 損失関数
