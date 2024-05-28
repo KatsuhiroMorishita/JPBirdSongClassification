@@ -1,9 +1,17 @@
 tag: "kuina"   # 評価対象のタグ
 margin: 2      # 正解の時間区間と比較する際の余裕。[秒]
-F_th: 0.005    # F値を計算する際に使う閾値
+F_th: 0.5    # F値を計算する際に使う閾値
 likelihood_files:    # 尤度で示された識別結果のファイルのリスト
   glob.glob("./data/likelihoods/prediction_likelihoods*.csv")
 list_name:           # 正解の区間リスト
   "./data/timelists/yanbal_sample_timelist.txt"
 basename_use: True   # ファイル名だけで、正解と予測結果を突き合わせるならTrue。フルパス推奨なのでFalseがデフォルト。
-#last_predict_use: True  # 最後の予測フォルダ内の結果を使うならTrue
+#last_predict_use: True  # 最後の予測フォルダ内の結果を使うならTrue。likelihood_filesの設定よりも優先する。
+compare_depth: 1      # 音源ファイルから見て親フォルダまでで比較する場合は1。ファイル名だけで比較する場合は0とする。basename_useの設定が優先される。
+#path_replace_for_likelifood_files: ["2.29", "3.46"]
+
+
+FP_FN_list:       # 見逃しなどの区間リストを作成パラメータ
+  margin: 15      # 判定の緩さ[s]
+  fusion: 10      # 検出区間の結合距離[s]
+  th: [0.6, 0.8]   # リストを作成する際の尤度に対する閾値

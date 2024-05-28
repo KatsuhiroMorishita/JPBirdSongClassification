@@ -14,10 +14,18 @@
 #   2023-01-12        感度も求めるように変更して、PR曲線とその曲線化の面積を求めるように変更
 #   2023-01-13        numbaで高速化した部分で、parallel=Trueとするとエラーになるので、Falseに変更した（20倍くらい遅くなるかな）
 #   2023-10-02        predict.pyの保存フォルダに名前を付ける機能に対応して、last_dirnumber(), last_dirpath(), next_dirpath()を修正。
+#   2024-03-19        実行時の引数に対応し、パスの比較で、音源ファイルの上にあるフォルダの階層数を設定できるようにした。これで文字列置換がほとんど不要になる。
+#                     鳴き声区間ごとの検出率（感度に近い）を計算するように機能追加
+#   2024-03-21        鳴き声区間ごとの検出率のグラフを保存する様にして、偽陽性・偽陰性の区間リストを保存する様に機能を追加した。
+#                     正解の区間リストに#でコメントを入れられるようにもした。
+#   2024-03-27        鳴き声単位で閾値ごとの感度を求める処理が非常に時間がかかるので、省略できるようにした。また、予測結果を引数で指定する際に指定しやすくなるよう機能を追加した。
+#   2024-04-01        引数処理のバグを修正
+#   2024-05-15        区間リストを読み込む処理を更新して、対応書式を広げた。また、区間同士の比較ロジックを変更し、暫定でマージンを廃止した。
+#                     閾値ごとのPrecision/Recallを保存するようにした。
 # author: Katsuhiro Morishita
 # created: 2020-04-27
 # license: MIT. If you use this program for your study, you should write Acknowledgement in your paper.
-import os, re, glob, copy, time, pprint, shutil
+import os, re, glob, copy, time, pprint, shutil, ast, argparse
 from datetime import datetime as dt
 from numba import jit, njit
 import numpy as np
@@ -79,39 +87,72 @@ def next_dirpath(pattern="train", root=r'./runs'):
 
 
 
-def read_likelihoods(likelihood_file, basename=False):
+def read_likelihoods(likelihood_file, compare_depth=-1):
     """ 予測で出力された尤度のリストを読み込む
     likelihood_file: str, 尤度が格納されたテキストファイルのパス
-    basename: str, ファイル名のパスがフルパスでは都合が悪い場合（ファイル名だけで比較したい場合）はTrueを指定してください。
+    compare_depth: int, パスを比較する深度。0だとファイル名のみで比較する。
     """
     df = pd.read_csv(likelihood_file, encoding="utf-8-sig")
+    #print("-----------------")
+    #print2(df.head())
 
-    if basename:   # ファイルのパスからフォルダを排除して、ファイル名のみとする
-        path_change = lambda x: os.path.basename(x)
-        df.iloc[:, 0] = df.iloc[:, 0].map(path_change)  # ファイルのパスをファイル名だけに変更
-    print(df.head())
+    # パスの加工の前に、バックアップとしてパスをコピー
+    df["fname_back"] = df["fname"].values
+
+    # パスの加工（ファイル名だけとか、1つ上の親フォルダまでとかで加工）
+    if compare_depth >= 0:
+        path_change = lambda x: os.path.join(*re.split(r"[\\/]", x)[-1 - compare_depth:])
+        df.iloc[:, 0] = df.iloc[:, 0].map(path_change)
+
+    print("++++++++ likelihood_file after path processing +++++++++")
+    print2(df.head())
 
     return df
 
 
 
 # save_spectimage_with_list2.pyより移植、改編
-def read_list(fname, basename=False):
+## コメントへの対応
+## パスの円マークを/に置換するように変更
+## パスの深さを指定できる様に変更
+## パス名に"や'があっても削除
+## 区間数が少ない場合に空の辞書を返す
+def read_list(fname, compare_depth=-1, ignore_size=None):
     """ 音源と時間区間のリストを読み込む
     fname: str, 読み込むファイル名
-    basename: str, ファイル名のパスがフルパスでは都合が悪い場合（ファイル名だけで比較したい場合）はTrueを指定してください。
+    compare_depth: int, パスを比較する深度。0だとファイル名のみで比較する。
     """
     ans = {}
+    count = 0
+    path_change = lambda x: x.replace("\\", "/")   # 円マーク（windowsでは円マーク）を/に書き換えるラムダ関数
+
     with open(fname, "r", encoding="utf-8-sig") as fr:
         lines = fr.readlines()  # 全行読み込み
         for line in lines:
             line = line.rstrip()  # 改行コード削除
+            if "#" in line:       # コメント文への対応
+                line = line[:line.find("#")]
+                line = line.rstrip()  # 空白削除
             if len(line) == 0:    # 空行を避ける
                 continue
+
             field = line.split(",")
             path = field[0]       # ファイルのパスを取得
-            if basename:                       # add.
-                path = os.path.basename(path)  # add. パスからファイル名を取り出す。
+
+            # パスの区切り文字を統一
+            path = path_change(path)
+
+            # パスに余計な文字があれば排除
+            if '"' in path:
+                path = path.replace('"', "")
+            if "'" in path:
+                path = path.replace("'", "")
+
+
+            # パスの加工（ファイル名だけとか、1つ上の親フォルダまでとかで加工）
+            if compare_depth >= 0:
+                path = os.path.join(*re.split(r"[\\|/]", path)[-1 - compare_depth:])
+
             times = field[1:]     # 時刻のリストを格納
             if len(times) < 2:    # 時刻が入っていない行は避ける
                 continue
@@ -125,11 +166,18 @@ def read_list(fname, basename=False):
                 width = float(times[i + 1])
                 time_list.append((start, width))
 
-            print(path)
-            print(time_list)
+            #print(path)
+            #print(time_list)
 
             ans[path] = time_list  # 辞書として保存
-    return ans
+            count += len(time_list)
+    
+    # 規定サイズ以下だったら空の辞書を返す
+    if ignore_size is not None and ignore_size >= count:
+        return {}
+    else:
+        return ans
+
 
 
 
@@ -148,16 +196,25 @@ class DetectChecker:
         """
         m = margin
 
+        #print(self._time_list_dict.keys())
+        #exit()
+
         if fpath in self._time_list_dict:
             time_lists = self._time_list_dict[fpath]
 
             s2, w2 = time_pair
+            e2 = s2 + w2
             for s1, w1 in time_lists:
-                if (s2 >= (s1 - m) and (s2 + w2) <= (s1 + w1 + m))  or  (s1 >= (s2 - m) and (s1 + w1) <= (s2 + w2 + m)):
+                e1 = s1 + w1
+                #if (s2 >= (s1 - m) and (s2 + w2) <= (s1 + w1 + m))  or  (s1 >= (s2 - m) and (s1 + w1) <= (s2 + w2 + m)):
+                #    return True
+
+
+                if (s1 <= s2 <= e1) or (s1 <= e2 <= e1) or ((s2 <= s1) and (e2 >= e1)) :
                     return True
         else:
             pass
-            #print("{} is not inclued in timelist.".format(fpath))
+            #print(f"warning::  {fpath} is not inclued in timelist.")
             #exit()
 
         return False
@@ -166,7 +223,7 @@ class DetectChecker:
 
 
 # if文とPythonのsum()を排除して1000倍速、さらにnumbaの力で20倍で、トータル1万倍速くなった。
-@njit("f8[:,:](bool_[:], f8[:], f8[:])", parallel=False)   # Trueとすると、いつの間にかエラーになるようになった…
+@njit("f8[:,:](bool_[:], f8[:], f8[:])", parallel=False)   # parallel=Trueとすると、いつの間にかエラーになるようになった…
 def check_amount(true, score, thresholds):
     """ AUC計算の検算
     true: ndarray<bool>, 真値の入った一次元配列
@@ -257,21 +314,338 @@ def check_amount0(true, score, thresholds):
 
 
 
+# timelist_from_likelihoods7.pyより移植・改変
+def to_binary(df, target_kind, th_sets, positive=True, view=False):
+    """ 尤度を基に特定のクラスに対する識別結果を返す
+    df: pandas.DataFrame, ファイル名、時間区間、尤度を格納したpandasのDataFrame
+    target_kind: str, 読み込むタグ
+    th_sets: tuple<float>, 尤度に対する閾値
+    positive: bool, Trueなら、target_kindの結果を読み込む。Falseならtarget_kind以外の結果を読み込む。
+    """
+    body = df[target_kind].values
+    th1, th2 = th_sets
+    if positive:
+        results = (body >= th1) & (body < th2)
+    else:
+        results = ~((body >= th1) & (body < th2))
+    df2 = df[results]
+    df2 = df2.reset_index(drop=True)
+
+    if view:
+        print("df2, ", df2.shape)
+        print(df2.head())
+
+    ans = {}
+    for i in range(len(df2)):
+        path = df2.at[i, "fname"]
+        start = df2.at[i, "s"]
+        width = df2.at[i, "w"]
+        if path not in ans:
+            ans[path] = []
+        ans[path].append((start, width))
+    count = len(df2)
+
+    return ans, count
+
+
+
+
+# timelist_compare.pyより引用・改変
+def comp2(set_A_dict, set_B_dict, margin=0, view=False):
+    """ timelist同士で、積集合 A ∩ B, 差集合 B − A, 差集合 A − B を返す。第1引数がAで、第２引数がB。
+    set_A_dict: dict<str: list>, 基準となるリスト。ファイル名をkeyとして、valueには区間のリストを格納すること。
+    set_B_dict: dict<str: list>, 比較対象のリスト。構造はset_A_dictと同じ。
+    margin: float, 時間的な余白。境界部分での判定ミスを許容する場合は10程度を渡してください。
+    """
+    inter_ab, diff_ba, diff_ab = {}, {}, {}    # intersection（積集合）, difference（差集合）
+    m = margin
+
+    # 積集合 A ∩ B、差集合 B − Aを求める
+    for fpath in set_B_dict:
+        time_list2 = set_B_dict[fpath]
+
+        if fpath in set_A_dict and len(set_A_dict[fpath]) != 0:   # そもそも辞書にない、もしくは空のリストだったらループ内に入らない
+            time_list1 = set_A_dict[fpath]    # 同じファイルを比較
+
+            for s2, w2 in time_list2:
+                flag = False
+                for s1, w1 in time_list1:
+                    if (s2 >= (s1 - m) and (s2 + w2) <= (s1 + w1 + m))  or  \
+                       (s1 >= (s2 - m) and (s1 + w1) <= (s2 + w2 + m)):
+                        flag = True
+                        break
+
+                if flag:
+                    if fpath not in inter_ab:    # 格納したことがなければ、空のリストを用意
+                        inter_ab[fpath] = []
+                    inter_ab[fpath] += [(s2, w2)]   # 区間が包含関係にあった場合
+                else:
+                    if fpath not in diff_ba:
+                        diff_ba[fpath] = []
+                    diff_ba[fpath] += [(s2, w2)]
+
+        else:
+            if fpath not in diff_ba:    # 格納したことがなければ、空のリストを用意
+                diff_ba[fpath] = []
+            diff_ba[fpath] += time_list2
+
+    if view:
+        print("inter_ab", inter_ab)
+        print("diff_ba", diff_ba)
+
+    # 差集合 A − B  == （A - (A ∩ B)）を求める
+    for fpath in set_A_dict:
+        time_list2 = set_A_dict[fpath]    # 同じファイルを比較
+
+        if fpath in inter_ab and len(inter_ab[fpath]) != 0:
+            time_list1 = inter_ab[fpath]
+            for s2, w2 in time_list2:
+                for s1, w1 in time_list1:
+                    if (s2 >= (s1 - m) and (s2 + w2) <= (s1 + w1 + m))  or  (s1 >= (s2 - m) and (s1 + w1) <= (s2 + w2 + m)):
+                        flag = True
+                        break
+
+                if flag == False:
+                    if fpath not in diff_ab:    # 格納したことがなければ、空のリストを用意
+                        diff_ab[fpath] = []
+                    diff_ab[fpath] += [(s2, w2)]   # 区間が包含関係にあった場合
+        else:
+            if fpath not in diff_ab:    # 格納したことがなければ、空のリストを用意
+                diff_ab[fpath] = []
+            diff_ab[fpath] += time_list2
+
+    if view:
+        print("diff_ab", diff_ab)
+
+    return inter_ab, diff_ba, diff_ab
+
+
+
+
+# create_human_voice_list4.pyからの移植。
+def fusion(time_list, th=1.2):
+    """ 時間的に接近している検出区間を統合したものを返す
+    time_list:  list<tuple<float, float>>, 開始時刻と終了時刻をペアにしたタプルを多数格納したリスト
+    th: float, 繋げる間隔[s]
+    """
+    # まずは、時系列になる様に並べ替え
+    time_list = sorted(time_list, key=lambda x:x[0])
+
+    # 近いものを結合した新しいリストを作成
+    ans = []
+    #print(time_list)
+    s1, e1 = time_list[0]
+    for i in range(1, len(time_list)):  # 要素数が2以上の時に実行される
+        s2, e2 = time_list[i]
+        if s2 - e1 < th:       # 時間的に接近していれば、くっつける
+            e1 = e2
+        else:
+            ans.append((s1, e1))   # 十分に時間的に分離しているとみなして、追加
+            s1, e1 = s2, e2
+
+        if i == len(time_list) - 1:   # 最後の要素だったら追加
+            ans.append((s1, e1))
+
+    if len(time_list) == 1:   # 要素数が1の時は上のfor文は実行されないので、要素をここで追加
+        ans = [(s1, e1)]
+
+    return ans
+
+
+
+# timelist_compare.pyより引用
+def save_timelist(time_list, file_name):
+    """ timelist（ファイルのパスをキーとする辞書）をファイルに保存する
+    """
+    with open(file_name, "w", encoding="utf-8-sig") as fw:
+        for fpath in time_list:
+            time_pairs = time_list[fpath]
+            time_pairs = ["{:.2f},{:.2f}".format(s, w)  for s, w in time_pairs]
+            txt = ",".join(time_pairs)
+            fw.write("{},{}\n".format(fpath, txt))
+
+
+
+# timelist_compare.pyより引用・改変
+def save_diff_timelist(time_list_correct, time_list_test, margin=0, save_dir="", tag=""):
+    """ 区間リストを比較し、その積集合（両方のリストに該当するもの）と差集合（いずれかのリストにしか掲載の無いもの）を保存する
+    積集合は正解に相当し、差集合はFalse PositiveとFalse Negativeに相当する。
+    ただし、リストの掲載漏れについては関知しないので、注意すること。
+    time_list_correct: dict[str]<lsit>, 正解とみなす区間リスト。ファイルパスをキーとし、時間の区間を格納した辞書
+    time_list_test: dict[str]<lsit>, 正解と比較したい区間リスト。ファイルパスをキーとし、時間の区間を格納した辞書
+    save_dir: str, 保存先のフォルダへのパス（相対パスでも絶対パスでもよい）
+    tag: str, 保存するファイルに付ける任意の文字列
+    """
+
+    # 比較
+    inter_ab, diff_ba, diff_ab = comp2(time_list_correct, time_list_test, margin)   # 積集合と差集合２つが得られる
+
+    # 結果の保存
+    save_timelist(inter_ab, os.path.join(save_dir, f"timelist_intersection_{tag}.txt"))  # A ∩ Bを保存
+    save_timelist(diff_ba,  os.path.join(save_dir, f"timelist_FalsePositive_{tag}.txt"))    # B - Aを保存
+    save_timelist(diff_ab,  os.path.join(save_dir, f"timelist_FalseNegative_{tag}.txt"))    # A - Bを保存
+
+    
+    # それぞれの件数をカウント
+    counts = {}
+
+    count = 0
+    for key in inter_ab:
+        count += len(inter_ab[key])
+    counts["intersection"] = count
+
+    count = 0
+    for key in diff_ba:
+        count += len(diff_ba[key])
+    counts["FalsePositive"] = count
+
+    count = 0
+    for key in diff_ab:
+        count += len(diff_ab[key])
+    counts["FalseNegative"] = count
+
+    counts["detected"] = counts["intersection"] + counts["FalsePositive"]   # 検出された全数
+
+
+    return counts
+
+
+
+
+
+# https://note.nkmk.me/python-bool-true-false-usage/#bool-bool
+def strtobool(val):
+    """Convert a string representation of truth to true or false.
+
+    True values are 'y', 'yes', 't', 'true', 'on', and '1'; false values
+    are 'n', 'no', 'f', 'false', 'off', and '0'.  Raises ValueError if
+    'val' is anything else.
+    """
+    val = val.lower()
+    if val in ('y', 'yes', 't', 'true', 'on', '1'):
+        return True
+    elif val in ('n', 'no', 'f', 'false', 'off', '0'):
+        return False
+    else:
+        raise ValueError("invalid truth value {!r}".format(val))
+
+
+
+
+def arg_parse(params):
+    """ 引数の解析と、設定の上書き
+    """
+    parser = argparse.ArgumentParser(description="略")
+
+    # 引数の追加
+    parser.add_argument("-lf", "--likelihood_files")
+    parser.add_argument("-cf", "--correct_fpath")
+    parser.add_argument("-t", "--tag")
+    parser.add_argument("-ct", "--class_terget")
+    parser.add_argument("-m", "--margin")
+    parser.add_argument("-lpu", "--last_predict_use")
+    parser.add_argument("-bnu", "--basename_use")
+    parser.add_argument("-pr", "--path_replace_for_likelifood_files")
+    parser.add_argument("-cd", "--compare_depth")
+    parser.add_argument("-prrl", "--pseudo_recall_r_limit")
+    parser.add_argument("-prtl", "--pseudo_recall_th_limit")
+
+    # 引数を解析
+    args = parser.parse_args()
+    
+    # 設定に反映
+    if args.likelihood_files:    # 処理対象ファイルの指定への対応。スクリプトの引数内では、\は\\としてエスケープすること。
+        value = args.likelihood_files
+        print("***", value, "***")
+        # globで指定された場合
+        if "glob.glob" == value[:9]:
+            index = value.find(")")
+            if index > 0:
+                order = value[:index + 1]
+                v = eval(order)
+                params["likelihood_files"] = sorted(v)
+
+        # listで指定された場合
+        elif value[0] == "[" and value[-1] == "]":
+            index = value.find("]")
+            if index > 0:
+                order = value[:index + 1]
+                v = ast.literal_eval(order)      # -f "[r'./a/fuga.mp3', r'E:\fuga.wav', 'c']"
+                params["likelihood_files"] = sorted(v)
+        
+        # ただ１つだけパスが書かれていた場合
+        elif os.path.exists(value):
+            params["likelihood_files"] = [value]
+
+    if args.correct_fpath: params["correct_fpath"] = str(args.correct_fpath)
+    if args.tag: params["tag"] = str(args.tag)
+    if args.class_terget: params["class_terget"] = str(args.class_terget)
+    if args.margin: params["margin"] = int(args.margin)
+    if args.last_predict_use: 
+        params["last_predict_use"] = strtobool(args.last_predict_use)
+
+        # 最後の予測フォルダの結果の利用を指示されていた場合、最後のフォルダ内のファイルを探す。
+        if params["last_predict_use"]:
+            last_dir = last_dirpath("predict")
+            params["likelihood_files"] = glob.glob(last_dir + "/prediction_likelihoods*.csv") + \
+                                         glob.glob(last_dir + "/**/prediction_likelihoods*.csv")
+    if args.basename_use: params["basename_use"] = strtobool(args.basename_use)
+
+    if args.path_replace_for_likelifood_files:    # パスの変換ルール
+        value = args.path_replace_for_likelifood_files
+        if value[0] == "[" and value[-1] == "]":
+            index = value.find("]")
+            if index > 0:
+                order = value[:index + 1]
+                v = ast.literal_eval(order)      # -f "['hoge', 'fuga']"
+                params["path_replace_for_likelifood_files"] = v
+
+    if args.compare_depth: params["compare_depth"] = int(args.compare_depth)
+
+    # パラメータ間の調整
+    if params["basename_use"]:
+        params["compare_depth"] = 0
+    if params["compare_depth"] < -1:
+        params["compare_depth"] = -1
+
+    if args.pseudo_recall_r_limit: params["pseudo_recall_r_limit"] = float(args.pseudo_recall_r_limit)
+    if args.pseudo_recall_th_limit: params["pseudo_recall_th_limit"] = float(args.pseudo_recall_th_limit)
+
+
+    return params
+
+
+
+
+
 
 def set_default_setting():
     """ デフォルトの設定をセットして返す
     """
     params = {}
-    params["tag"] = ""         # 評価対象のタグ
+    params["tag"] = ""               # フォルダに付ける名前
+    params["class_terget"] = ""      # 評価対象のクラス名
     params["likelihood_files"] = []           # 尤度で示された識別結果のファイルのリスト
-    params["list_name"] = "dummy_list.txt"    # 正解の区間リスト
+    params["correct_fpath"] = "dummy_list.txt"    # 正解の区間リスト
     params["F_th"] = 0.25                     # F値を計算する際に使う閾値
     params["y_score_test"] = False   # 動作確認用に、ダミーデータと比較する場合はTrueとする
     params["graph_show"] = False     # グラフを描画するかどうか
     params["margin"] = 10            # 正解扱いする範囲を広げるマージン
     params["basename_use"] = False   # ファイル名だけで、正解と予測結果を突き合わせるならTrue。フルパス推奨なのでFalseがデフォルト。
     params["last_predict_use"] = False  # 最後の予測フォルダ内の結果を使うならTrue
-    params["path_replace"] = None
+    params["path_replace_for_likelifood_files"] = None    # 例: ["2.29", "3.46"]
+    params["compare_depth"] = -1     # -1だとファイルに記載されているパスをそのまま使う
+
+    if params["basename_use"]:    # コード的な働きはないが、意味的にはこうなので書いておく
+        params["compare_depth"] = 0
+
+    params["FP_FN_list"] = {                  # 見逃しなどの区間リストを作成パラメータ
+                            "margin":15,      # 判定の緩さ[s]
+                            "fusion":0,       # 検出区間の結合距離[s]
+                            "th":[0.6, 0.7, 0.8]     # リストを作成する際の尤度に対する閾値
+                            }
+    params["pseudo_recall_r_limit"] = 0.95    # 鳴き声ごとの感度を計算する際に、計算時間が非常にかかる場合があるので感度がこの値を超えたらそれ以上の計算を省略する
+    params["pseudo_recall_th_limit"] = 0.20    # 鳴き声ごとの感度を計算する際に、計算時間が非常にかかる場合があるので閾値がこの値を下回ったらそれ以上の計算を省略する
     return params
 
 
@@ -309,22 +683,21 @@ def read_setting(fname):
     return param
 
 
-def print_setting(params):
-    """いい感じに設定内容の辞書を表示する
-    """
-    params_ = copy.deepcopy(params)
-    pprint.pprint(params_)
-
 
 
 
 def main():
     # 設定を読み込み
     setting = read_setting("evaluate_setting.yaml")
+
+    # 引数のチェック
+    setting = arg_parse(setting)
     print2("\n\n< setting >", setting)
 
     # 保存先のフォルダを作る
     save_root_dir = next_dirpath("evaluate")
+    if setting["tag"] != "":
+        save_root_dir += f"_{setting['tag']}"
     os.makedirs(save_root_dir, exist_ok=True)
 
     # 設定の保存（後でパラメータを追えるように）
@@ -335,7 +708,7 @@ def main():
 
 
     for fpath in setting["likelihood_files"]:
-        print("--proccess start--: ", fpath)
+        print("\n\n--proccess start--: ", fpath)
         basename = os.path.basename(fpath)
         name, ext = os.path.splitext(basename)
         save_dir = os.path.join(save_root_dir, name)    # 処理結果を保存するフォルダのパスを作る
@@ -347,28 +720,33 @@ def main():
         shutil.copy2(fpath, os.path.join(save_dir, name + ".bak"))
 
         # 予測結果の尤度データを読み込み
-        df = read_likelihoods(fpath, basename=setting["basename_use"])   # 予測結果を読み込み
-        path_change1 = lambda x: x.replace("/", "\\")
-        df["fname"] = df["fname"].map(path_change1)  # ファイルのパスの表記を統一
-
+        df = read_likelihoods(fpath, compare_depth=setting["compare_depth"])   # 予測結果を読み込み
+        
         # 必要ならパス名を置換する
-        if setting["path_replace"] is not None:
-            a, b = setting["path_replace"]
+        if setting["path_replace_for_likelifood_files"] is not None:
+            a, b = setting["path_replace_for_likelifood_files"]
             path_change2 = lambda x: x.replace(a, b)
-            df["fname"] = df["fname"].map(path_change2)  # ファイルのパスの表記を統一
+            df["fname"] = df["fname"].map(path_change2)  # パスの中の文字列を置換
 
-        #print(df["fname"].head())
+        # ファイルのパスの表記を統一
+        path_change1 = lambda x: x.replace("\\", "/")
+        df["fname"] = df["fname"].map(path_change1)  
+
+        print("**************  fname heads in likelifood_files after path replacing.  ************")
+        print(df["fname"].head())
 
         # 評価対象の列データを取り出す
-        y_score = df[setting["tag"]].values       # 予想された尤度。tagの列をndarray型で取り出す
+        y_score = df[setting["class_terget"]].values       # 予想された尤度。tagの列をndarray型で取り出す
         
         # 正解の区間リスト読み込み
-        time_dict = read_list(setting["list_name"], basename=setting["basename_use"])
+        time_dict = read_list(setting["correct_fpath"], compare_depth=setting["compare_depth"])
         file_paths = list(time_dict.keys())          # ファイルのパスの表記を統一するために、キー（ファイルのパス）を取り出す
         for path in file_paths:
             time_dict[path_change1(path)] = time_dict.pop(path)
             #print("path:         ", path)
             #print("changed path: ", path_change1(path))
+        print("++++++++++++  time_dict  ++++++++++++")
+        print2(time_dict)
 
         # 予測結果に合わせて、正解を作成
         checker = DetectChecker(time_dict)
@@ -406,12 +784,41 @@ def main():
         # ROC-AUCの計算の検算
         df_checked = check_amount0(y_true, y_score, thresholds)
         print("df_checked is generated.")
+
+  
+        # 鳴き声区間ごとの検出率を算出
+        print("**********  Detection Rate of Each Call/Song **********")
+        fuga = []
+        df_ = df[["fname", "s", "w", setting["class_terget"]]]
+        for x in thresholds:
+            print(f"*** now threshold is {x}.")
+            time_dict_, size = to_binary(df_, setting["class_terget"], (x, 1.01))
+            checker_ = DetectChecker(time_dict_)
+            true_num, count = 0, 0
+
+            for fpath2 in time_dict:
+                for time_pair in time_dict[fpath2]:
+                    s_, w_ = time_pair
+                    true_num += checker_.check_time_pair(fpath2, (s_, w_), 1)
+                    count += 1
+            if count == 0:
+                pseudo_recall = float("nan")
+            else:
+                pseudo_recall = true_num / count
+            fuga.append(pseudo_recall)
+
+            if pseudo_recall >= setting["pseudo_recall_r_limit"] or x < setting["pseudo_recall_th_limit"]:    # これ以上計算しても無駄だし、時間がかかりすぎるので脱出
+                break
+        fuga += [pseudo_recall] * (len(thresholds) - len(fuga))
+        df_checked["鳴き声区間ごとの検出率"] = fuga
+
         
         # ROC-AUCの保存 
         with open(os.path.join(save_dir, "ROC-AUC_result.txt"), "w", encoding="utf-8-sig") as fw:
             fw.write("auc,{}".format(roc_auc))
         
         # fpr, tprをpandasで保存
+        print("~~~~~~  Save FPR/TPR to DataFrame ~~~~~~")
         df_roc = pd.DataFrame({'th': thresholds, 'fpr': fpr, 'tpr': tpr})  # 格納順はExcelでのグラフを作りやすいように決めた。
         df_roc = pd.concat([df_roc, df_checked], axis=1)    # DataFrameの結合
         df_roc.to_excel(os.path.join(save_dir, "data.xlsx"), index=False)
@@ -440,7 +847,6 @@ def main():
             plt.show()
         plt.clf()
 
-
         # 適合率P・感度（再現率）Recallの散布図（PR曲線）を保存
         P = df_roc["適合率P"].values
         R = df_roc["感度R"].values      # 感度は再現率ともいう
@@ -455,7 +861,21 @@ def main():
             plt.show()
         plt.clf()
 
-        # 適合率P・感度Recallのグラフを保存
+        # 適合率P・鳴き声区間ごとの検出率の散布図を保存
+        P = df_roc["適合率P"].values
+        R = df_roc["鳴き声区間ごとの検出率"].values
+        pr_auc = auc(R, P)
+        plt.scatter(R, P, marker='o', label='PR curve (area = {0:.2f})'.format(pr_auc))
+        plt.xlabel('Detection Rate of Each Call (nearly Recall)')
+        plt.ylabel('Precision')
+        plt.legend()
+        plt.grid()
+        plt.savefig(os.path.join(save_dir, 'P-DRE_curve.png'))
+        if setting["graph_show"]:
+            plt.show()
+        plt.clf()
+
+        # 横軸を閾値、縦軸を適合率Pと感度Recallとするグラフを保存
         plt.scatter(thresholds, P, marker='o', label='Precision')
         plt.scatter(thresholds, R, marker='o', label='Recall')
         plt.xlabel('thresholds')
@@ -473,10 +893,62 @@ def main():
 
         
         # F値を求める（ただし、閾値がテキトーなときは参考に留めること）
+        print("=====  Calculation of F1 Value =====")
         R = recall_score(y_true, y_score >= setting["F_th"])
         P = precision_score(y_true, y_score >= setting["F_th"])
-        F = 2 * (P*R) / (P + R)
+        if P + R == 0:
+            F = float("nan")
+        else:
+            F = 2 * (P*R) / (P + R)
         print("R:{:.2f}, P:{:.2f}, F:{:.2f}".format(R, P, F))
+
+
+        # 見逃しなどの区間リストを作成
+        ## そのままだと相対パスだったりするので、正解の区間リストを識別結果に入っているパスに置換する
+        time_dict_c = time_dict.copy() 
+        keys = time_dict_c.keys()
+        for key in list(keys):
+            full_path = df.loc[df["fname"] == key, "fname_back"].values[0]
+            time_dict_c[full_path] = time_dict_c.pop(key)
+        
+        ## 閾値毎に作成
+        print("######  Save FP/FN time-list ######")
+        df_ = df[["fname", "s", "w", setting["class_terget"]]]
+        with open(os.path.join(save_dir, f"each_amount.txt"), "w", encoding="utf-8-sig") as fw:
+            fw.write("th,intersection,FalsePositive,FalseNegative,detected,Precision,Recall,F1\n")
+
+            for x in setting["FP_FN_list"]["th"]:
+                print(f"+++ now threshold is {x}.")
+                time_dict_, size = to_binary(df_, setting["class_terget"], (x, 1.01))
+
+                # 区間の結合処理
+                if setting["FP_FN_list"]["fusion"] > 0:
+                    keys = time_dict_.keys()
+                    for key in list(keys):
+                        time_dict_[key] = fusion(time_dict_[key], th=setting["FP_FN_list"]["fusion"])
+
+                # そのままだと相対パスだったりするので、識別結果に入っているパスに置換する
+                keys = time_dict_.keys()
+                for key in list(keys):
+                    full_path = df.loc[df["fname"] == key, "fname_back"].values[0]
+                    time_dict_[full_path] = time_dict_.pop(key)
+                
+                counts = save_diff_timelist(time_dict_c, time_dict_, margin=setting["FP_FN_list"]["margin"], save_dir=save_dir, tag=f'{setting["class_terget"]}_th{x}')
+
+                if counts["detected"] == 0:
+                    p_ = float("nan")
+                else:
+                    p_ = counts["intersection"] / counts["detected"]
+
+                if counts["intersection"] + counts["FalseNegative"] == 0:
+                    r_ = float("nan")
+                else:
+                    r_ = counts["intersection"] / (counts["intersection"] + counts["FalseNegative"])
+                if p_ + r_ == 0:
+                    f1_ = float("nan")
+                else:
+                    f1_ = 2 * (p_* r_) / (p_ + r_)
+                fw.write(f'{x},{counts["intersection"]},{counts["FalsePositive"]},{counts["FalseNegative"]},{counts["detected"]},{p_},{r_},{f1_}\n')
     
     
     # 修了処理
