@@ -34,19 +34,32 @@
 #  2023-05-20        SavedModel形式の保存方式にも対応。独自の損失関数を使った場合の学習で実際に使った関数を用意しなくても済むように変更した。
 #  2023-08-30        予測フォルダの整理のために、フォルダ名に任意の文字列をつけれるようにした。
 #  2023-10-02        保存フォルダに名前を付ける機能に対応して、last_dirnumber(), last_dirpath(), next_dirpath()を修正。
+#  2024-03-14        今年の1月に作成したrealtime_prediction202312c.pyから、Discriminatorを移植した。predict_classes_topN()が増加している。
+#                    Grad-CAMによる識別結果の可視化機能も追加した。
+#  2024-03-16        listでフォルダやファイルのパスを複数並べるのをやりやすく変更した。
+#                    libs.sound_imageをバージョン10に切り替えて、スペクトログラムを作る前に生波形にノイズを加えることが可能になった。
+#  2024-03-17        predict_images()内の関数も対応した。この関数については動作未検証。
+#                    軽微なバグを修正した。
+#  2024-03-19        軽微なバグを修正した。
+#                    引数で処理対象のファイルをリスト形式で指定できるようにして、更にCAMの有効・無効も制御できるようにした。
+#  2024-04-01        引数処理のバグを修正
+#  2024-04-11        複数の音源を予測する場合に、残りの処理時間を表示するようにした。
 # author: Katsuhiro Morishita
 # created: 2019-10-29
-import sys, os, re, glob, copy, time, pickle, pprint, argparse, traceback
+import sys, os, re, glob, copy, time, pickle, pprint, argparse, traceback, ast
 from datetime import datetime as dt
+from datetime import timedelta as td
 import numpy as np
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import librosa
 from PIL import Image
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 import yaml
+import unicodedata, hashlib
 
-import libs.sound_image9 as si
+import libs.sound_image10 as si
 
 
 
@@ -100,15 +113,82 @@ def next_dirpath(pattern="train", root=r'./runs'):
 
 
 
+# Grad-CAMによる識別結果の可視化（判定に強く利用された画像野領域を可視化）
+# https://keras.io/examples/vision/grad_cam/
+def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
+    # First, we create a model that maps the input image to the activations
+    # of the last conv layer as well as the output predictions
+    grad_model = tf.keras.models.Model(
+        model.inputs, [model.get_layer(last_conv_layer_name).output, model.output]
+    )
+
+    # Then, we compute the gradient of the top predicted class for our input image
+    # with respect to the activations of the last conv layer
+    with tf.GradientTape() as tape:
+        last_conv_layer_output, preds = grad_model(img_array)
+        if pred_index is None:
+            pred_index = tf.argmax(preds[0])
+        class_channel = preds[:, pred_index]
+
+    # This is the gradient of the output neuron (top predicted or chosen)
+    # with regard to the output feature map of the last conv layer
+    grads = tape.gradient(class_channel, last_conv_layer_output)
+
+    # This is a vector where each entry is the mean intensity of the gradient
+    # over a specific feature map channel
+    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+
+    # We multiply each channel in the feature map array
+    # by "how important this channel is" with regard to the top predicted class
+    # then sum all the channels to obtain the heatmap class activation
+    last_conv_layer_output = last_conv_layer_output[0]
+    heatmap = last_conv_layer_output @ pooled_grads[..., tf.newaxis]
+    heatmap = tf.squeeze(heatmap)
+
+    # For visualization purpose, we will also normalize the heatmap between 0 & 1
+    heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
+    return heatmap.numpy()
+
+
+
+# ヒートマップを重ねて保存する。
+# ref: https://keras.io/examples/vision/grad_cam/
+def superimpose_gradcam(img, heatmap, alpha=0.4):
+    # Rescale heatmap to a range 0-255
+    heatmap = np.uint8(255 * heatmap)
+
+    # Use jet colormap to colorize heatmap
+    jet = mpl.colormaps["jet"]
+
+    # Use RGB values of the colormap
+    jet_colors = jet(np.arange(256))[:, :3]
+    jet_heatmap = jet_colors[heatmap]
+
+    # Create an image with RGB colorized heatmap
+    jet_heatmap = tf.keras.utils.array_to_img(jet_heatmap)
+    jet_heatmap = jet_heatmap.resize((img.shape[1], img.shape[0]))
+    jet_heatmap = tf.keras.utils.img_to_array(jet_heatmap)
+
+    # Superimpose the heatmap on original image
+    superimposed_img = jet_heatmap * alpha + img
+    superimposed_img = tf.keras.utils.array_to_img(superimposed_img)
+
+    return superimposed_img
+
+
+
 class Discriminator:
     """ 画像に対する識別を行うクラス
     kerasによるニューラルネットワークでの識別を行います。
     """
-    def __init__(self, model_path="model.hdf5", label_path="label_dict.pickle", img_size=(32, 32, 3), th=0.2, save_dir=".", custom_objects={}):
+    def __init__(self, model_path="model.hdf5", label_path="label_dict.pickle", 
+                       img_size=(32, 32, 3), th=0.2, save_dir=".", custom_objects={},
+                       CAM=None):
         """ 
         model_path: str, 結合係数も一緒に保存されたモデルへのパス
         label_path: str, 識別結果（整数）をラベル（名称）に変換する辞書へのパス
         img_size: tuple, 識別機用の画像のサイズ. (width, height, channel)
+        CAM: dict, 最期の畳み込み層の名前。CAMによるヒートマップを保存する場合に指定すること。
         """
         self.model = load_model(model_path, custom_objects=custom_objects)  # model
         self.model.summary()     # モデル構造の表示（モデルの状態を表示させないと入出力画像フォーマットが不明なことがある）
@@ -120,6 +200,7 @@ class Discriminator:
         else:
             dir_path, fname = os.path.split(model_path)
             name, ext = os.path.splitext(fname)    # モデルのファイル名から拡張子を除いたものを取得
+        self.model_name = name.replace(".", "").replace("_", "")   # ドット.とアンダーバー_は無視する
         self.fname_result = os.path.join(save_dir, "prediction_result_{}.csv".format(name))
         self.fname_likelihoods = os.path.join(save_dir, "prediction_likelihoods_{}.csv".format(name))
 
@@ -131,7 +212,7 @@ class Discriminator:
         self.fw_result = None
         self.fw_likeliboods = None
 
-        # ラベルを変換する辞書の読み込み
+        # ラベルを変換する辞書（index番号からクラス名を調べる辞書）の読み込み
         self.label_dict = None
         with open(label_path, 'rb') as f:
             self.label_dict = pickle.load(f)  # オブジェクト復元. dict
@@ -151,6 +232,19 @@ class Discriminator:
             else:
                 label_arr_.append("unknown")
         self.label_arr = np.array(label_arr_)
+
+        # 識別結果の可視化の準備（判定に強く利用された画像野領域を可視化）
+        self.CAM_ready = False
+        if CAM is not None and CAM["enable"] == True:
+            label_dict_swap = {v: k for k, v in self.label_dict.items()}  # 番号から名前を引く辞書から、名前から番号を引く辞書をつくる
+            self.CAM_index = label_dict_swap[CAM["class_name"]]           # 名前に紐づいた番号
+            self.CAM_last_conv_layer_name = CAM["last_conv_layer_name"]   # 最期の畳み込み層の名前
+            #self.CAM_model = tf.keras.models.clone_model(self.model)      # モデルをコピー
+            #self.CAM_model.layers[-1].activation = None                   # 最期の層の活性化関数を削除　（必要なの？）
+            self.CAM_model = self.model
+            self.CAM_savedir = os.path.join(save_dir, "CAM")              # 保存先のフォルダ
+            os.makedirs(self.CAM_savedir, exist_ok=True)                  # 保存先のフォルダを作っておく
+            self.CAM_ready = True                                         # CAMの保存の準備ができたことをフラグで示す
 
         # GPUは初回の動作が遅いので、ダミー画像を予め処理させておく
         w, h, c = img_size
@@ -174,35 +268,101 @@ class Discriminator:
             fw.write("{},{},{},{}\n".format("fname", "s", "w", txt))
 
 
-    def predict_classes(self, x):
+    def predict_classes(self, x: np.ndarray, tags=None, save=False, image_name_lambda=None):
         """ 最大尤度となったクラスラベルと尤度のリストを返す
         注意：それぞれの画像に対してラベルは1つだが、predict_classes2()との整合性を保つために、predicted_classesは2次元配列となっている。
         x: ndarray, 識別したい画像のリスト
+        save: bool, 識別結果をcsvで保存したい場合はTrue
+        image_name_lambda: lambda, CAMを保存する際につける名前を作る関数
         """
         result_raws = self.model.predict(x, batch_size=len(x), verbose=0) # クラス毎の尤度を取得。 尤度の配列がレコードの数だけ取得される
         result_list = [len(arr) if np.max(arr) < self.th else arr.argmax() for arr in result_raws]  # 最大尤度を持つインデックスのlistを作る。ただし、最大尤度<thの場合は、"ND"扱いとする
         predicted_classes = np.array([[self.label_dict[class_id]] for class_id in result_list])   # 予測されたclass_local_idをラベルに変換
 
+        # 識別結果の保存を指示されていた場合
+        if tags is not None and save == True:
+            self.__save(tags, results=predicted_classes, likelihoods=result_raws)
+
+        # 識別の根拠となった部分を画像として保存する
+        if self.CAM_ready:
+            result_list_ = np.array(result_list)
+            target_result_over_th = result_list_ != (len(self.label_arr) - 1)    # 尤度が閾値を超えた画像をTrueとする配列を作成
+            target_result_likelihoods = [np.max(arr) for arr in result_raws]    # 最大尤度値の配列を作成
+
+            # save class activation heatmap
+            self.__save_CAM(x, target_result_over_th, target_result_likelihoods, predicted_classes, image_name_lambda)
+
+
         return predicted_classes, result_raws
 
 
-    def predict_classes2(self, x):
+    def predict_classes2(self, x: np.ndarray, tags=None, save=False, image_name_lambda=None):
         """ 尤度が閾値を超えたクラスラベルと尤度のリストを返す
         x: ndarray, 識別したい画像のリスト
+        tags: list<str>, ファイルに結果とともに書き込む文字列
+        save: bool, 識別結果をcsvで保存したい場合はTrue
+        image_name_lambda: lambda, CAMを保存する際につける名前を作る関数
         """
         result_raws = self.model.predict(x, batch_size=len(x), verbose=0) # クラス毎の尤度を取得。 尤度の配列がレコードの数だけ取得される
         result_list = [arr >= self.th for arr in result_raws]             # 尤度が閾値を超えた要素をTrueとしたlistを作る。
         result_list2 = [list(y) + [True] if np.sum(y) == 0 else list(y) + [False] for y in result_list]  # NDの分の処理
         predicted_classes = [self.label_arr[class_ids] for class_ids in result_list2]     # 予測されたclass_idをラベルに変換
 
+
+        # 識別結果の保存を指示されていた場合
+        if tags is not None and save == True:
+            self.__save(tags, results=predicted_classes, likelihoods=result_raws)
+
+        # 識別の根拠となった部分を画像として保存する
+        if self.CAM_ready:
+            result_list_ = np.array(result_list)
+            target_result_over_th = result_list_[:, self.CAM_index]   # 論理反転もそのうち必要かも
+            target_result_likelihoods = result_raws[:, self.CAM_index]
+            labels = [self.label_dict[self.CAM_index]] * len(x)       # ラベルの配列
+
+            # save class activation heatmap
+            self.__save_CAM(x, target_result_over_th, target_result_likelihoods, labels, image_name_lambda)
+
         return predicted_classes, result_raws
 
 
-    def predict_classes2_with_save(self, x: np.ndarray, tags: list):
-        """ 予測とその結果の保存を行う。返値はない。
+    def predict_classes_topN(self, x: np.ndarray, N: int, tags=None, save=False):
+        """ 尤度順にラベルと尤度をN個格納した配列を返す
         x: ndarray, 識別したい画像のリスト
         tags: list<str>, ファイルに結果とともに書き込む文字列
+        save: bool, 結果を保存するならTrue
         """
+        predicted_classes, result_raws = self.predict_classes2(x, tags, save) # クラス毎の尤度を取得。 尤度の配列がレコードの数だけ取得される
+        
+
+        # top Nを集計
+        result = []
+
+        for arr in result_raws:
+            # 尤度が大きい順に並べる
+            index_ = np.argsort(arr)[::-1][:N]    # 大きい順に並べたときのインデックス（要素番号）を取得
+            likelihoods = np.sort(arr)[::-1][:N]  # 大きい順に並べる
+
+            #print(index_)
+            #print(likelihoods)
+
+            # 基準値以上のものを抽出
+            n = np.sum(likelihoods > self.th)     
+            if n > 0:
+                index_ = index_[:n]
+                likelihoods = likelihoods[:n]
+            else:
+                index_ = [len(arr)]
+                likelihoods = [0.0]
+
+            classes = [self.label_dict[class_id] for class_id in index_]   # 予測されたclass_local_idをラベルに変換
+
+            result.append([(x, y)   for x, y in zip(classes, likelihoods)])
+
+        return result
+
+
+    def __save(self, tags, results=None, likelihoods=None):
         # ファイルの準備
         if self.fw_result is None:
             self.fw_result = open(self.fname_result, "a", encoding="utf-8-sig")
@@ -210,23 +370,45 @@ class Discriminator:
         if self.fw_likeliboods is None:
             self.fw_likeliboods = open(self.fname_likelihoods, "a", encoding="utf-8-sig")
 
-        # 識別
-        results, likelihoods = self.predict_classes2(x)
-        #print(results)
 
         # 結果の保存
-        for tag, result in zip(tags, results):
-            num = len(result)
-            txt = "," * (len(self.class_names) - num - 1)  # 足りないラベルの分、カンマを作る。ただし、NDがあるので、１引く。
-            labels = ",".join(result) + txt
-            self.fw_result.write("{},{}\n".format(tag, labels))
+        if results is not None and len(results) > 0:
+            for tag, result in zip(tags, results):
+                num = len(result)
+                txt = "," * (len(self.class_names) - num - 1)  # 足りないラベルの分、カンマを作る。ただし、NDがあるので、１引く。
+                labels = ",".join(result) + txt
+                self.fw_result.write("{},{}\n".format(tag, labels))
 
-        for tag, likelihood in zip(tags, likelihoods):
-            likelihood = [str(x)  for x in likelihood]
-            likelihood_txt = ",".join(likelihood)
-            self.fw_likeliboods.write("{},{}\n".format(tag, likelihood_txt))
+        #print(likelihoods)
+        if likelihoods is not None and len(likelihoods) > 0:
+            for tag, likelihood in zip(tags, likelihoods):
+                likelihood = [str(x)  for x in likelihood]
+                likelihood_txt = ",".join(likelihood)
+                self.fw_likeliboods.write("{},{}\n".format(tag, likelihood_txt))
 
-        return
+
+
+    def __save_CAM(self, x, over_th, likelihoods, labels, fname_generator):
+        """ CAM画像を保存する
+        """
+        for i, x_ in enumerate(x):
+            if over_th[i]:
+                # ヒートマップと、それを重ねた画像を作成
+                heatmap = make_gradcam_heatmap(np.array([x_]), self.CAM_model, self.CAM_last_conv_layer_name)
+                x_ = (x_ * 255).astype(np.uint8)
+                img_ = superimpose_gradcam(x_, heatmap)
+
+                # ファイル名を作成
+                if fname_generator is None:
+                    save_name = f"{labels[i]}_{i:04d}_th{p:.2f}.png"
+                else:
+                    p = likelihoods[i]
+                    save_name = fname_generator(i, p, labels[i])
+
+                # 画像を保存
+                img_.save(os.path.join(self.CAM_savedir, save_name))
+
+
 
 
     def close_file(self):
@@ -390,6 +572,40 @@ def preprocessing3(img, params):
 
 
 
+# sound_image10.pyより移植
+def get_location_ID(file_path):
+    """ 音源ファイルの親フォルダ名から、録音場所等を識別するための略称を作って返す
+    location_Aなどは、2017年以降に沖縄で録音した場所を基準として命名したものである。
+    単純なので画像ファイルの区別には便利だが、単純すぎたのでIDだけでは録音年度を特定できないので注意して欲しい。
+    """
+    file_path = os.path.abspath(file_path)
+    location = "unknown"
+    
+    # location_Aやlocation_B1などを判別
+    p = r"location_(?P<loc>[A-Z]+\d*)"
+    m = re.search(p, file_path)
+    if m:
+        location = m.group("loc")
+
+
+    # CDの音源ファイルを区別するために、locationをフォルダ名から作る
+    if location == "unknown":
+        field = re.split(r"\\|¥|/", file_path)    # NASの中のフォルダ名はos.basename()では得られなかったので、区切り文字で切断
+                                                  # dir_name = os.path.basename(os.path.dirname(fpath))てな感じでも良かったかも
+        if len(field) >= 2:       # 指定されたファイルがフォルダ内だった場合
+            dir_name = field[-2]
+        else:                     # 分割できなかった場合
+            dir_name = field[0]
+
+        dir_name = unicodedata.normalize("NFC", dir_name)  # MacはNFD形式でファイル名を扱うので、Windowsと同じNFC形式に変換
+        hs = hashlib.md5(dir_name.encode()).hexdigest()
+        location = str(len(dir_name)) + hs[:4]
+
+    return location
+
+
+
+
 def predict_images(fnames, setting, discriminators):
     """ 画像ファイルを識別し、その結果を保存する
     fnames: str, 画像ファイルのパスが入ったリスト
@@ -421,8 +637,6 @@ def predict_images(fnames, setting, discriminators):
                 imgs.append(img)
                 tags.append("{},{},{}".format(fpath, float("nan"), float("nan")))
 
-        i = end_index
-
         if len(imgs) != 0:
             # 画像の前処理
             for f in setting["preprocess_chain"]:
@@ -431,10 +645,16 @@ def predict_images(fnames, setting, discriminators):
 
             # 取得した画像を識別・結果の保存
             for dis in discriminators:
-                dis.predict_classes2_with_save(imgs2, tags)
+                dis.predict_classes2(imgs2, 
+                                     tags, 
+                                     save=True, 
+                                     image_name_lambda=lambda a, b, c=0.0: f"{dis.model_name}_{c}_{fnames[a + i]}_LF{b:.2f}.png")
+
         else:
             print("return None")
             break
+
+        i = end_index
 
         # kill.txtを見つけたら、終了する。安全に終了させるため。単独で動かしている場合は不要かもだが。
         if os.path.exists("kill.txt"):
@@ -493,7 +713,6 @@ def predict_sound(fname, setting, discriminators):
                 imgs.append(img)
                 tags.append("{},{},{}".format(fpath, s, e-s))
 
-        i = end_index
         #print(f"imgs length is {len(imgs)}.")
 
         if len(imgs) != 0:
@@ -502,9 +721,17 @@ def predict_sound(fname, setting, discriminators):
                 imgs = [f(img, setting) for img in imgs]    # 前処理
             imgs2 = np.array(imgs)  # ndarrayに型を変える
 
+            # 保存するファイル名に入れる文字列を作成
+            name, ext = os.path.splitext(os.path.basename(fname))    # ファイル名と拡張子を分割
+            loc = get_location_ID(fname)
+            file_id = f"{loc}__{name}"
+
             # 取得した画像を識別・結果の保存
             for dis in discriminators:
-                dis.predict_classes2_with_save(imgs2, tags)
+                dis.predict_classes2(imgs2, 
+                                     tags, 
+                                     save=True, 
+                                     image_name_lambda=lambda a, b, c=0.0: f"{dis.model_name}__{file_id}__{(a + i) * sw:.1f}_{w:.1f}_{c}_LF{b:.2f}.png")
 
             # 画像を保存する（デバッグ用）
             if setting["save_img"]:
@@ -517,10 +744,13 @@ def predict_sound(fname, setting, discriminators):
                     img[img > 255] = 255         # 輝度値の上限制限
                     img = img.astype(np.uint8)    # 画像として扱えるように、型を変える
                     pil_img = Image.fromarray(img)        # 保存できるように、pillowのImageに変換  
-                    pil_img.save(f'save_img/save_{os.path.basename(fname)}_{i}_{k}_test.png')    # 画像ファイルとして保存  
+                    pil_img.save(f'save_img/save_{file_id}_{(k + i) * sw:.1f}_test.png')    # 画像ファイルとして保存  
+
         else:
             print("return None")
             break
+
+        i = end_index
 
         # kill.txtを見つけたら、終了する。安全に終了させるため。単独で動かしている場合は不要かもだが。
         if os.path.exists("kill.txt"):
@@ -533,7 +763,8 @@ def predict_sound(fname, setting, discriminators):
 
 
 
-def read_models(dir_path, img_size, th, model_format=".hdf5", label_pattern="label*.pickle", save_dir=".", custom_objects={}):
+def read_models(dir_path, img_size, th, model_format=".hdf5", label_pattern="label*.pickle", 
+                save_dir=".", custom_objects={}, CAM=None):
     """ 指定されたフォルダ内のモデルを読み込む。返値は識別機オブジェクトの配列。
     1フォルダにつき有効なラベルは1つだけ。
     """
@@ -557,12 +788,31 @@ def read_models(dir_path, img_size, th, model_format=".hdf5", label_pattern="lab
                                      th=th, 
                                      save_dir=os.path.join(save_dir, os.path.basename(os.path.dirname(model_path))),
                                      custom_objects=custom_objects,
+                                     CAM=CAM,
                                      ) 
                         for model_path in models]
 
     return discriminators_
 
 
+
+
+
+# https://note.nkmk.me/python-bool-true-false-usage/#bool-bool
+def strtobool(val):
+    """Convert a string representation of truth to true or false.
+
+    True values are 'y', 'yes', 't', 'true', 'on', and '1'; false values
+    are 'n', 'no', 'f', 'false', 'off', and '0'.  Raises ValueError if
+    'val' is anything else.
+    """
+    val = val.lower()
+    if val in ('y', 'yes', 't', 'true', 'on', '1'):
+        return True
+    elif val in ('n', 'no', 'f', 'false', 'off', '0'):
+        return False
+    else:
+        raise ValueError("invalid truth value {!r}".format(val))
 
 
 
@@ -575,12 +825,14 @@ def arg_parse(params):
     parser.add_argument("-f", "--files")
     parser.add_argument("-g", "--gpu")
     parser.add_argument("-t", "--tag")
+    parser.add_argument("-ce", "--cam_enable")
+    parser.add_argument("-ct", "--cam_target")
 
     # 引数を解析
     args = parser.parse_args()
-
+    
     # 設定に反映
-    if args.gpu: params["GPU"] = bool(args.gpu)
+    if args.gpu: params["GPU"] = strtobool(args.gpu)
     if args.files:    # 処理対象ファイルの指定への対応（現時点ではglobにのみ対応）。スクリプトの引数内では、\は\\としてエスケープすること。
         value = args.files
         print("***", value, "***")
@@ -590,7 +842,16 @@ def arg_parse(params):
                 order = value[:index + 1]
                 v = eval(order)
                 params["file_names"] = sorted(v)
+        elif value[0] == "[" and value[-1] == "]":
+            index = value.find("]")
+            if index > 0:
+                order = value[:index + 1]
+                v = ast.literal_eval(order)      # -f "[r'./a/fuga.mp3', r'E:\fuga.wav', 'c']"
+                params["file_names"] = sorted(v)
+
     if args.tag: params["tag"] = str(args.tag)
+    if args.cam_enable: params["CAM"]["enable"] = strtobool(args.cam_enable)
+    if args.cam_target: params["CAM"]["class_name"] = args.cam_target
 
     return params
 
@@ -625,12 +886,16 @@ def set_default_setting():
             "n_mels": 128,         #: int, 周波数方向の分解能（画像の縦方向のピクセル数）
             "n_fft": 2048,         #: int, フーリエ変換に使うポイント数
             "raw": False,          # Trueだと音圧情報をスペクトログラムの一番上のセルに埋め込む
+            "noise": 0.0,          # 音源の波形に加えるノイズの大きさ。波形の標準偏差が基準。
             }
     params["th"] = 0.9             # 判定に用いる尤度
     params["preprocess_chain"] = [preprocessing]
     params["save_img"] = False     # デバッグ用に、画像を作成
     params["lr"] = ""              # "left" or "right" or other
-    params["tag"] = ""
+    params["tag"] = ""               # フォルダに付ける名前
+    params["CAM"] = {"enable":False,    # 識別結果の根拠を可視化する場合はTrue
+                     "class_name": "", 
+                     "last_conv_layer_name":""}  # 最期の畳み込み層の名前。CAMによるヒートマップを保存する場合に指定すること。
     return params
 
 
@@ -652,6 +917,18 @@ def read_setting(fname):
                     order = value[:index + 1]
                     v = eval(order)
                     obj[key] = v
+
+            # listで指定されたファイルやフォルダのパスの場合
+            if isinstance(value, list):
+                value_ = []
+                for x in value:
+                    if isinstance(x, str) and re.match(r"r('|\")(\w|:|/|\\|\.|_|\-|\+|。)+('|\")", x):
+                        x = x[2:-1]   # 先頭のrとダブるコートまたはシングルコートをとる
+                        x = x.replace("\\", "/")  # バックスラッシュをスラッシュに置換
+                        value_.append(x)
+                    else:
+                        value_.append(x)
+                obj[key] = value_
 
             # 単なるlistがあれば、tupleにしておく
             #if isinstance(value, list):
@@ -763,8 +1040,16 @@ def main():
                         model_format=setting["model_format"], 
                         label_pattern=setting["label_pattern"], 
                         save_dir=save_dir,
-                        custom_objects=setting["custom_objects"])
+                        custom_objects=setting["custom_objects"],
+                        CAM=setting["CAM"]
+                        )
         discriminators += dis_
+
+    if len(discriminators) == 0:
+        print("0 models or 0 label dictionary founded. Check your setting file.")
+        exit()
+    else:
+        print(f"{len(discriminators)} models founded.")
 
 
     # 設定の保存（後でパラメータを追えるように）
@@ -785,8 +1070,15 @@ def main():
         print(fnames[:10])
 
         # ファイルを処理
-        if setting["mode"] == "sound":       # 音声ファイルを予測
-            for fname in fnames:             # 音声ファイルはサイズが大きいので、音声ファイルごとに処理
+        ts = time.time()
+        if setting["mode"] == "sound":            # 音声ファイルを予測
+            for i, fname in enumerate(fnames):    # 音声ファイルはサイズが大きいので、音声ファイルごとに処理
+                # 残りの処理時間を表示
+                if i >= 1:
+                    tn = time.time()
+                    last_time = td(seconds=((tn - ts) / i * (len(fnames) - i)))
+                    print(f">>>{i + 1}/{len(fnames)}, pass:{int(tn - ts)} sec., last:{last_time}.")
+
                 try:             # たまにエラーが発生するので、その対応
                     predict_sound(fname, setting, discriminators)  # 予測の実行
                 except Exception as e:

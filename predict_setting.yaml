@@ -26,6 +26,7 @@ imagegen_params:    # スペクトログラムを作る基本関数へ渡すパ�
   top_remove: 0     # 内部で画像生成後に削る上端のピクセル数。縦のピクセル数はn_mels-top_removeとなる。
   raw: True         # スペクトログラムに生の音声の振幅情報を埋め込むかどうか。Trueで埋め込む。
   #cut_band: [[15000, 22000, "lower"]]
+  noise: 0.0
 
 load_mode: "kaiser_fast"   # 読み込む方法。mp3で影響大。kaiser_bestの方が綺麗ではある。
 hop: 0.0251       # 1 pixel幅に相当する時間幅[秒]
@@ -34,5 +35,10 @@ shift_rate: 1.0     # 次の画像生成のためにどの程度ずらすかを�
 
 
 # 前処理の設定
-preprocess_chain: ["preprocessing", "preprocessing3"]
+preprocess_chain: ["preprocessing", "preprocessing3"]    # 画像の前処理が必要な場合は、必要な処理を行う関数の名前を順番に記載すること。複数ある場合は,で区切る。
 
+# 識別結果の可視化を行う場合の設定
+CAM:
+  enable: False
+  class_name: "ootoratsugumi"
+  last_conv_layer_name: "block5_conv3"
