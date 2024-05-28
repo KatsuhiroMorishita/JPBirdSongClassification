@@ -147,7 +147,7 @@ $ pip install -r requirements.txt
 $ py -m pip install -r requirements.txt  
 ```
 
-なお、requirements.txtにはPythonに必要なライブラリが記載されています。このファイル内にはtensorflowのバージョンを2.10を指定していますが、これは素のWindows用の設定です。WindowsでもWSLを使って動かす場合や、UbuntuやMacOS上で動かす場合はこの制限を外しても大丈夫です。ただし、GPUを使う場合は、インストールするtensorflowのバージョンとCUDAのバージョンに整合性が必要ですのでご注意ください。  
+なお、requirements.txtにはPythonに必要なライブラリが記載されています。このファイル内でtensorflowのバージョンに2.10を指定していますが、これは素のWindows用の設定です。WindowsでもWSLを使って動かす場合や、UbuntuやMacOS上で動かす場合はこの制限を外しても大丈夫です。ただし、GPUを使う場合は、インストールするtensorflowのバージョンとCUDAのバージョンに整合性が必要ですのでご注意ください。  
 </details>
 
 
