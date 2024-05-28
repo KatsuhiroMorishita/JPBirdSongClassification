@@ -17,6 +17,7 @@
 #  2022-12-23 ver.15 image_preprocessing14.pyに変更
 #  2023-05-20 ver.17 SavedModel形式の読み込みに対応。独自の損失関数を作成する機能も追加した。
 #  2023-10-02 ver.18 plot_history()とsave_history()でaccの保存に対応
+#  2024-03-26 ver.19 focal_lossに重み係数を掛けるように変更
 # created: 2020-04-23
 import sys, os, pickle, time
 import tensorflow as tf
@@ -74,6 +75,7 @@ def gen_custom_loss(func_name: str, param: dict={}):
     elif func_name == "focal_loss":
         gamma = param["gamma"]
         a = param["a"]
+        w = param["weights"]
 
         def focal_loss(y_true, y_pred):
             """ Focal Lossを定義
@@ -81,7 +83,7 @@ def gen_custom_loss(func_name: str, param: dict={}):
             """
             y_pred = tf.math.maximum(y_pred, 0.0001) 
             y_pred = tf.math.minimum(y_pred, 0.9999)
-            loss = -tf.math.reduce_mean(a * y_true * tf.math.pow(1 - y_pred, gamma) * tf.math.log(y_pred) + (1 - y_true) * tf.math.pow(y_pred, gamma) * tf.math.log(1 - y_pred))
+            loss = -tf.math.reduce_mean(w * a * y_true * tf.math.pow(1 - y_pred, gamma) * tf.math.log(y_pred) + w * (1 - y_true) * tf.math.pow(y_pred, gamma) * tf.math.log(1 - y_pred))
             return loss
 
         return focal_loss

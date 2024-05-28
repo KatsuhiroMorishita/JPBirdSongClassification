@@ -3,31 +3,32 @@
 #       区間の指定がなければ、全音源領域で画像を作る。
 # author: Katsuhiro Morishita, Tamaki Shinmura
 # history:
-#             ver.3 前後にノイズだけでなく、元の音源を利用できるように改造
-#                   get_location_ID()がMacでも動くように修正
-#  2020-10-08 ver.4 研究室のNAS以外のファイルを処理する際に、既に作ったリストを流用するために、パスを書き換える機能を追加
-#                   siの計算後にスライスで存在しない要素番号を指定してエラーが出ることが有ったので対応
-#                   人の声の区間を画像化しないような機能を追加した。
-#  2020-11-16 ver.5 静寂と車の通過時のスペクトルグラムの区別がつきやすい様に、音の強弱をスペクトログラムの中に埋め込む処理を追加 
-#  2020-12-14       term==-1のとき、負の時間からの切り出しが指示されているとエラーになっていたので、負の時間が指定された場合に対応した。
-#  2020-12-15       term==-1の時でもpad_mode=="noise"の時でもマスク処理が働くように改造
-#  2021-03-02 ver.6 cut_bandを複数指定可能にして、ノイズ強度の基準を上端に取ったり下端に取ることを可能にした。
-#  2021-03-09       cut_bandとemphasize_bandを併用するとちぐはぐな画像となってたので、スケーリングの順序を変更した。バージョンはそのまま。
-#  2021-03-27       extendを選んだ際にどこまで画像として出力するか、指定している部分の計算ミスを修正した。バージョンはそのまま。
-#  2021-07-28 ver.7 変数名の意味が合わないので、overlap_rateをshift_rateに変更した。
-#  2021-11-20       保存フォルダを自動で作成するように変更した
-#  2021-12-07 ver.8 locaiton判別にて、B1などに対応。アルファベットもABCDX以外にも対応した。
-#  2022-09-26 ver.9 load_sound()にて、ファイルの読み込み失敗した場合への対応処理を追加
-#  2022-11-06       librosa.feature.melspectrogram()でfeature warningが出ていたので、対応
-#  2022-12-02       save_spectrogram_with_timelist()のバグ修正。以前もやった気がする…。
-#  2022-12-05       音源のLRの読み込み分けに対応
-#  2022-12-09       mp3音源のフォーマットによっては読み込みに失敗するらしく、その対応を入れた。
-#  2022-12-20       load_sound()を外部から呼び出しやすいように修正
-#  2023-08-30       音源データのスライスでまれにempty sliceデータになり、エラーが出ていたので対応。なぜかarray_data.sizeでは判定できなかった。
-#  2023-11-02       location IDの一覧を保存する様にした。
-#  2023-11-09       get_location_ID()が作るIDを4桁から6桁に拡張。これでフォルダ名称の文字数 + MD5 hash head 4 char となった。 
-#  2023-11-22       引数で渡されたリスト内のファイルのパスから、IDの一覧を作成・保存するsave_ID_list()を作成（処理をmainから分離した）
-#  2023-11-28       音源と同じフォルダにスペクトログラムを保存する機能を追加
+#             ver.3  前後にノイズだけでなく、元の音源を利用できるように改造
+#                    get_location_ID()がMacでも動くように修正
+#  2020-10-08 ver.4  研究室のNAS以外のファイルを処理する際に、既に作ったリストを流用するために、パスを書き換える機能を追加
+#                    siの計算後にスライスで存在しない要素番号を指定してエラーが出ることが有ったので対応
+#                    人の声の区間を画像化しないような機能を追加した。
+#  2020-11-16 ver.5  静寂と車の通過時のスペクトルグラムの区別がつきやすい様に、音の強弱をスペクトログラムの中に埋め込む処理を追加 
+#  2020-12-14        term==-1のとき、負の時間からの切り出しが指示されているとエラーになっていたので、負の時間が指定された場合に対応した。
+#  2020-12-15        term==-1の時でもpad_mode=="noise"の時でもマスク処理が働くように改造
+#  2021-03-02 ver.6  cut_bandを複数指定可能にして、ノイズ強度の基準を上端に取ったり下端に取ることを可能にした。
+#  2021-03-09        cut_bandとemphasize_bandを併用するとちぐはぐな画像となってたので、スケーリングの順序を変更した。バージョンはそのまま。
+#  2021-03-27        extendを選んだ際にどこまで画像として出力するか、指定している部分の計算ミスを修正した。バージョンはそのまま。
+#  2021-07-28 ver.7  変数名の意味が合わないので、overlap_rateをshift_rateに変更した。
+#  2021-11-20        保存フォルダを自動で作成するように変更した
+#  2021-12-07 ver.8  locaiton判別にて、B1などに対応。アルファベットもABCDX以外にも対応した。
+#  2022-09-26 ver.9  load_sound()にて、ファイルの読み込み失敗した場合への対応処理を追加
+#  2022-11-06        librosa.feature.melspectrogram()でfeature warningが出ていたので、対応
+#  2022-12-02        save_spectrogram_with_timelist()のバグ修正。以前もやった気がする…。
+#  2022-12-05        音源のLRの読み込み分けに対応
+#  2022-12-09        mp3音源のフォーマットによっては読み込みに失敗するらしく、その対応を入れた。
+#  2022-12-20        load_sound()を外部から呼び出しやすいように修正
+#  2023-08-30        音源データのスライスでまれにempty sliceデータになり、エラーが出ていたので対応。なぜかarray_data.sizeでは判定できなかった。
+#  2023-11-02        location IDの一覧を保存する様にした。
+#  2023-11-09        get_location_ID()が作るIDを4桁から6桁に拡張。これでフォルダ名称の文字数 + MD5 hash head 4 char となった。 
+#  2023-11-22        引数で渡されたリスト内のファイルのパスから、IDの一覧を作成・保存するsave_ID_list()を作成（処理をmainから分離した）
+#  2023-11-28        音源と同じフォルダにスペクトログラムを保存する機能を追加
+#  2024-03-05 ver.10 背景にホワイトノイズを加える機能を追加した。cut_bandの機能も拡張して、特定帯域の音圧を0にする機能も追加。
 # created: 2019-01-31      
 import os, re, glob, time
 import hashlib
@@ -41,7 +42,8 @@ import unicodedata   # MacとWindowsのファイル名の扱いの違いを吸�
 
 
 
-def get_melspectrogram_image(data, sr, n_mels=128, fmax=10000, n_fft=2048, hop_length=512, top_remove=0, emphasize_band=None, cut_band=None, raw=False):
+def get_melspectrogram_image(data, sr, n_mels=128, fmax=10000, n_fft=2048, hop_length=512, top_remove=0, 
+                             emphasize_band=None, cut_band=None, raw=False, noise=0):
     """ 波形データをスペクトログラム画像に変換して返す。ただし、メルスケールになっているので注意
     data: list<float> or ndarray<float>, 音の波形データ（切り出したものでもOK）
     sr: float, 音源を読み込む際のリサンプリング周波数[Hz]
@@ -52,9 +54,12 @@ def get_melspectrogram_image(data, sr, n_mels=128, fmax=10000, n_fft=2048, hop_l
     emphasize_band: list<float or int>, 例：[1000, 3000, 0.5] 1 kHz〜3 kHzを強調する場合で、輝度を小さい順にソートした際の0レベルの閾値。0.5なら中央値を輝度0に調整する。
     cut_band: list<tuple<float or int>>, 例：[(0, 700, "upper")]。複数指定も可能。
     raw: bool, Trueだと、スペクトログラムに振幅強度を埋め込む
+    noise: float, 0より大きいと、ノイズを加える。値は波形の標準偏差に対する相対値。
     """
     #print("debug info: ", data.size, len(data), np.sum(data), np.std(data), sr, n_mels, fmax, n_fft, hop_length)
     #data = np.nan_to_num(data, nan=np.nanmean(data))    # 非値を平均値に置換する
+
+    data = data + np.std(data) * np.random.rand(len(data)) * noise  # add noise
     S = librosa.feature.melspectrogram(y=data, sr=sr, n_mels=n_mels, fmax=fmax, n_fft=n_fft, hop_length=hop_length)  # スペクトログラムのデータを取得（2次元のndarray型）
     #log_S = librosa.power_to_db(S, ref=np.max)    # 対数を掛ける
     log_S = librosa.power_to_db(S, ref=np.max(S))  # 対数を掛ける
@@ -94,6 +99,13 @@ def get_melspectrogram_image(data, sr, n_mels=128, fmax=10000, n_fft=2048, hop_l
             if top_remove > 0:
                 scale = scale[:-top_remove]         # 上の方を削除
             scale2 = (scale >= f1) & (scale <= f2)  # 指定範囲に該当する行がTrueになる1次元配列を作成
+            
+            # 該当帯域の音圧を0にする場合
+            if ref == "zero":
+                log_S[scale2] = 0.0
+                continue
+
+            # それ以外の場合
             masked_log_S = log_S[scale2]        # 指定帯域の画像を作成
             if ref == "all":            # 基準に全体を使う場合
                 arr = masked_log_S
@@ -102,6 +114,8 @@ def get_melspectrogram_image(data, sr, n_mels=128, fmax=10000, n_fft=2048, hop_l
             else:  # lowerを想定
                 arr = masked_log_S[0]   # 最高周波数対の1行分を取り出す（1次元配列）, 帯域の下を取る。
             log_S[scale2] = np.random.normal(np.median(arr), np.std(arr), masked_log_S.shape)  # 指定帯域をノイズで上書き
+
+
 
 
     # 上下反転
@@ -149,6 +163,7 @@ def save_spectrogram_with_window(data, params, rp0=0, terminal=None):
     emphasize_band = params["emphasize_band"]
     cut_band = params["cut_band"]
     raw = params["raw"]
+    noise_level = params["noise"]
     
     rp = 0   # read point
     exit_flag = False
@@ -185,7 +200,10 @@ def save_spectrogram_with_window(data, params, rp0=0, terminal=None):
         hop_length = int(sr * hop)
         msg = "split"
         #try:
-        img = get_melspectrogram_image(sliced_data, sr=sr, n_mels=n_mels, fmax=fmax, n_fft=n_fft, hop_length=hop_length, top_remove=top_remove, emphasize_band=emphasize_band, cut_band=cut_band, raw=raw)  # スペクトログラムのデータを取得（2次元のndarray型）
+        img = get_melspectrogram_image(sliced_data, sr=sr, n_mels=n_mels, fmax=fmax, n_fft=n_fft, 
+                                       hop_length=hop_length, top_remove=top_remove, 
+                                       emphasize_band=emphasize_band, cut_band=cut_band, 
+                                       raw=raw, noise=noise_level)  # スペクトログラムのデータを取得（2次元のndarray型）
         #except Exception as e:
         #    img = np.zeros((120,120), dtype=np.int8)
         #    msg = "error"
@@ -600,6 +618,7 @@ def set_default_setting():
     params["mask_margin"] = 0    # マスク処理をかける際に、前後の方向に少し余裕を見て消す場合は0以上を設定のこと。
     params["lr"] = ""            # 音源のLRの読み込み分けを行うかを決める。"right"でR。
     params["location_save_only"] = False  # Trueだと、location IDのみを保存する
+    params["noise"] = 0.0        # 0より大きい値で、ノイズを加える
     return params
 
 
@@ -607,7 +626,7 @@ def set_default_setting():
 def main():
     # 設定を読み込み
     setting = set_default_setting()
-    setting = read_setting("sound_image_setting9.txt", setting)
+    setting = read_setting("sound_image_setting10.txt", setting)
     fnames = sorted(setting["file_names"])
     print(fnames)
 
