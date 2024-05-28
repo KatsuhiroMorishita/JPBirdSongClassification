@@ -17,9 +17,16 @@
 #             predict.pyの保存フォルダに名前を付ける機能に対応して、last_dirnumber(), last_dirpath(), next_dirpath()を修正。
 #  2023-10-11 build_model_local()内でのモデル作成方法を変更（試し）
 #  2023-11-18 モデル作成方法がうまくいっていなかったので、再修正（うまくいった）
+#  2023-12-20 tensorflowjs形式でも保存するようにしてみた。未検証なので上手くいくか不明。パッケージの競合もあるらしく、上手くいかない可能性もある。
+#  2024-03-28 カスタム損失関数でクラスごとに学習の重みを変えることができるようにしてみた。
+#  2024-03-29 1回の学習でnpyファイルが30 GB以上作られる様になったので、学習後に不要になったファイルを削除できるようにした。mlcoreを18から19に変更した。
+#             これで学習条件を変えながら複数回の連続学習が可能になる。
+#  2024-04-01 引数処理のバグを修正
+#             引数でlossを渡せるようにした。
+#  2024-04-11 複数の条件での学習を試すために、初回の学習に使用した学習データやモデルを流用できる機能を追加した。
 # author: Katsuhiro MORISHITA　森下功啓
 # created: 2021-10-18
-import sys, os, re, glob, copy, time, pickle, pprint, argparse, ast
+import sys, os, re, glob, copy, time, pickle, pprint, argparse, ast, shutil
 from datetime import datetime as dt
 import tensorflow as tf
 from tensorflow.keras import regularizers
@@ -37,7 +44,7 @@ import gc
 import cv2
 import yaml
 
-from libs.mlcore18 import *
+from libs.mlcore19 import *
 import libs.image_preprocessing15 as ip
 
 
@@ -57,32 +64,45 @@ def print2(*args):
             print(arg)
 
 
-def last_dirnumber(pattern="train", root=r'./runs'):
+def get_dir_name(pattern="train", root=r'./runs', index=0):
     """ 既に保存されている学習・予測フォルダ等の最大の番号を取得
     root: str, 探索するディレクトリへのパス
     """
-    path_dir = ""
     dirs = os.listdir(path=root)
-
-    max_ = 0
+    dirs_read = []
+    
+    # パターンに一致するフォルダを探す
     for d in dirs:
         path_dir_ = os.path.join(root, d)
         if os.path.isdir(path_dir_):
             m = re.match(r"{}(?P<num>\d+)".format(pattern), d)
             if m:
                 num = int(m.group("num"))
-                if max_ < num:
-                    max_ = num
-                    path_dir = path_dir_
-                
-    return max_, root, path_dir
+                dirs_read.append((num, path_dir_))
+
+    dirs_read = sorted(dirs_read, key=lambda number_dirname_pair: number_dirname_pair[0])  # 番号で小さい順にソート
+
+    if len(dirs_read) > 0:
+        number, path_dir = dirs_read[index]
+        return number, root, path_dir
+    else:
+        return 0, root, ""
+
+
+
+def first_dirpath(pattern="train", root=r'./runs'):
+    """ 最小の番号を持つ既に保存されている学習・予測フォルダ等のパスを返す
+    root: str, 探索するディレクトリへのパス
+    """
+    min_, path_root, path_dir = get_dir_name(pattern, root, 0)
+    return path_dir
 
 
 def last_dirpath(pattern="train", root=r'./runs'):
     """ 最大の番号を持つ既に保存されている学習・予測フォルダ等のパスを返す
     root: str, 探索するディレクトリへのパス
     """
-    max_, path_root, path_dir = last_dirnumber(pattern, root)
+    max_, path_root, path_dir = get_dir_name(pattern, root, -1)
     return path_dir
 
 
@@ -90,7 +110,7 @@ def next_dirpath(pattern="train", root=r'./runs'):
     """ 学習・予測フォルダ等を新規で作成する場合のパスを返す
     root: str, 探索するディレクトリへのパス
     """
-    max_, path_root, path_dir = last_dirnumber(pattern, root)
+    max_, path_root, path_dir = get_dir_name(pattern, root, -1)
     return os.path.join(path_root, pattern + str(max_ + 1)) 
 
 
@@ -133,6 +153,8 @@ def build_model_local2(input_shape, output_dim, data_format, loss='binary_crosse
     恐らく出力層1つ前の出力を取り出すならこちらが簡単だと思う。
     loss: 損失関数。多クラス多ラベル分類問題の場合、通常はbinary_crossentropyを使う
     """
+    np.random.seed(seed=1)      # 学習条件をそろえるために乱数をリセット
+    
     print("input_shape", input_shape)
     base_model = VGG16(include_top=False, weights='imagenet', input_shape=input_shape)
 
@@ -159,6 +181,24 @@ def build_model_local2(input_shape, output_dim, data_format, loss='binary_crosse
 
 
 
+# https://note.nkmk.me/python-bool-true-false-usage/#bool-bool
+def strtobool(val):
+    """Convert a string representation of truth to true or false.
+
+    True values are 'y', 'yes', 't', 'true', 'on', and '1'; false values
+    are 'n', 'no', 'f', 'false', 'off', and '0'.  Raises ValueError if
+    'val' is anything else.
+    """
+    val = val.lower()
+    if val in ('y', 'yes', 't', 'true', 'on', '1'):
+        return True
+    elif val in ('n', 'no', 'f', 'false', 'off', '0'):
+        return False
+    else:
+        raise ValueError("invalid truth value {!r}".format(val))
+
+
+
 def arg_parse(params):
     """ 引数の解析と、設定の上書き
     """
@@ -170,16 +210,51 @@ def arg_parse(params):
     parser.add_argument("-e", "--epochs")
     parser.add_argument("-i", "--initial_epoch")
     parser.add_argument("-l", "--leranig_layerid")
+    parser.add_argument("-rat", "--remove_after_train")
+    parser.add_argument("--loss")
+    parser.add_argument("--reuse")
+
 
     # 引数を解析
     args = parser.parse_args()
 
     # 設定に反映
     if args.lr: params["lr"] = float(args.lr)
-    if args.retry: params["retry"] = bool(args.retry)
+    if args.retry: params["retry"] = strtobool(args.retry)
     if args.epochs: params["epochs"] = int(args.epochs)
     if args.initial_epoch: params["initial_epoch"] = int(args.initial_epoch)
     if args.leranig_layerid: params["leranig_layerid"] = int(args.leranig_layerid)
+    if args.remove_after_train: params["remove_after_train"]["enable"] = strtobool(args.remove_after_train)
+    if args.loss: params["loss"] = str(args.loss)
+    if args.reuse: params["reuse"] = strtobool(args.reuse)
+
+
+    # lossの処理
+    if "local." == params["loss"][:6]:
+        # "local.hogehoge_func,{a=10}"の様な文字列を想定
+        lossName_lossParam = params["loss"][6:]            # 先頭文字列を削る
+        func_name, loss_param_str = lossName_lossParam.split(",", 1)   # 分割
+        func_name = func_name.strip()
+        loss_param_str = loss_param_str.strip()
+        func_name = func_name[:30]                       # 関数名の文字数制限
+        loss_param = ast.literal_eval(loss_param_str)    # 辞書オブジェクトに変換
+
+        # 重みの処理
+        w = [1.0] * len(params["class_sets"])
+        if "weights" in loss_param:
+            weights = loss_param["weights"]   # 例："{"kuina": 1.5}"
+
+            labels = sorted(list(params["class_sets"]))
+            for label in weights:
+                w[labels.index(label)] = weights[label]
+        loss_param["weights"] = np.array(w)
+
+        loss_function = gen_custom_loss(func_name, loss_param)
+        params["loss"] = loss_function
+        #print("------------------------", func_name, params["loss"])
+
+        # カスタムオブジェクトとしても登録しておく
+        params["custom_objects"][func_name] = loss_function
 
     return params
 
@@ -208,8 +283,12 @@ def set_default_setting():
     params["datagen_params"] = {}           # image data generatorへの指示パラメータ
     params["mixup_ignores"] = ["silence"]   # mixupで無視するクラス名
     params["retry"] = False                 # 前回の学習から続ける場合はTrue
+    params["reuse"] = False                 # 以前（初回）の学習に使用したデータとモデルを流用する場合はTrue
     params["custom_objects"] = {}      # 独自の活性化関数や損失関数を格納するカスタムオブジェクト
     params["onnx_output"] = True       # onnx形式でのモデル保存を実行する場合、True
+    params["tensorflowjs_output"] = False       # tensorflowjs形式でのモデル保存を実行する場合、True. ライブラリのバージョンでコンフリクトの恐れあり。
+    params["remove_after_train"] = {"enable":False, "pattern":""}    # 学習後にファイルを削除する際に使用する
+    
     return params
 
 
@@ -252,6 +331,16 @@ def read_setting(fname):
         func_name = func_name[:30]                       # 関数名の文字数制限
         loss_param = ast.literal_eval(loss_param_str)    # 辞書オブジェクトに変換
 
+        # 重みの処理
+        w = [1.0] * len(param["class_sets"])
+        if "weights" in loss_param:
+            weights = loss_param["weights"]   # 例："{"kuina": 1.5}"
+
+            labels = sorted(list(param["class_sets"]))
+            for label in weights:
+                w[labels.index(label)] = weights[label]
+        loss_param["weights"] = np.array(w)
+
         loss_function = gen_custom_loss(func_name, loss_param)
         param["loss"] = loss_function
         #print("------------------------", func_name, param["loss"])
@@ -285,14 +374,47 @@ def main():
         raise ValueError("Teacher image data directory is not exists. Please check your setting.")
 
 
-    # 教師データの読み込みと、モデルの構築。必要なら、callbackで保存していた結合係数を読み込む
-    if setting["retry"]:
+    # 保存先の親フォルダを作成
+    os.makedirs("runs", exist_ok=True)  # 保存先のフォルダを作成
+
+
+    # 教師データの読み込みと、モデルの構築
+    ## 学習を再開させる場合
+    if setting["retry"] and setting["reuse"] != True:
         # 学習を再開させる場合
         save_dir = last_dirpath("train")   # （前回の、そして今回の）結果の保存先
         x_train, y_train, x_test, y_test, weights_dict, label_dict, model = reload(load_dir=save_dir, custom_objects=setting["custom_objects"], model_format=setting["model_format"])
         test_file_names = restore(['test_names.pickle'], load_dir=save_dir)[0]   # 1つしか無いがlistで返ってくるので[0]で取り出す
-    else:
+    
+    # 学習用のデータを流用する場合
+    elif setting["reuse"]:
         save_dir = next_dirpath("train")      # 結果の保存先
+        if setting["retry"]:
+            save_dir = last_dirpath("train")   # （前回の、そして今回の）結果の保存先
+        os.makedirs(save_dir, exist_ok=True)  # 保存先のフォルダを作成
+        
+        load_dir = first_dirpath("train")      # 保存済みの学習データ等が保存されているフォルダ
+        x_train, y_train, x_test, y_test, weights_dict, label_dict, model = reload(load_dir=load_dir, custom_objects=setting["custom_objects"], model_format=setting["model_format"])
+        test_file_names = restore(['test_names.pickle'], load_dir=load_dir)[0]   # 1つしか無いがlistで返ってくるので[0]で取り出す
+
+        # モデルの対応
+        if setting["retry"]:
+            # 追加の学習の場合は、学習済みのモデルを読み込む
+            model = reload(load_names=[], with_model=True, load_dir=save_dir, custom_objects=setting["custom_objects"], model_format=setting["model_format"])[0]
+        else:
+            # 最初から学習を始める場合は、モデルを再構築
+            model = build_model_local2(input_shape=x_train.shape[1:], 
+                                       output_dim=y_train.shape[1], 
+                                       data_format=setting["data_format"])   # モデルの作成
+
+        # ラベル名の辞書は予測処理での利用に備えてコピーしておく
+        if not setting["retry"]:
+            shutil.copy2(os.path.join(load_dir, "label_dict.pickle"), save_dir)
+
+    # 教師データの読み込みと、モデルの構築。必要なら、callbackで保存していた結合係数を読み込む
+    else:
+        last_dir = last_dirpath("train")      # 前回の結果の保存先
+        save_dir = next_dirpath("train")      # 今回の結果の保存先
         os.makedirs(save_dir, exist_ok=True)  # 保存先のフォルダを作成
         data_format = setting["data_format"]
         dir_names_dict = ip.search_image_dir(setting["image_root"],  # 画像フォルダのクラス名とパスの一覧を辞書で取得
@@ -314,9 +436,9 @@ def main():
                                                            save_dir=save_dir)
         
         if "--load_model" in sys.argv:
-            # モデルだけを読み込む（保存されたモデルに対し、クラスが変化（増えたり減ったり入れ替わったり）なければ動く）
-            last_dir = last_dirpath("train")   # 前回の結果の保存先
-            model = reload(load_names=[], with_model=True, load_dir=last_dir, custom_objects=setting["custom_objects"])[0]
+            # 前回の学習結果から、モデルだけを読み込む（保存されたモデルに対し、クラスが変化（増えたり減ったり入れ替わったり）なければ動く）
+            # 機会はあまりないけど、追加で学習を進める場合に利用する
+            model = reload(load_names=[], with_model=True, load_dir=last_dir, custom_objects=setting["custom_objects"], model_format=setting["model_format"])[0]
         else:
             # モデルの新規作成
             model = build_model_local2(input_shape=x_train.shape[1:], 
@@ -396,7 +518,8 @@ def main():
                                                  )
 
     # 学習
-    history = model.fit(   # ImageDataGeneratorを使った学習
+    np.random.seed(seed=1)      # 学習条件をそろえるために乱数をリセット
+    history = model.fit(        # ImageDataGeneratorを使った学習
         datagen_train.flow(x_train, y_train, batch_size=batch_size, shuffle=True, balancing=True),  # シャッフルは順序によらない学習のために重要
         epochs=setting["epochs"],
         steps_per_epoch=steps_per_epoch,
@@ -432,6 +555,14 @@ def main():
         onnx.save(onnx_model, model_path)
 
 
+    # tensorflowjs形式での保存 (https://note.com/npaka/n/n143ba7e60176)
+    if setting["tensorflowjs_output"]:
+        import tensorflowjs as tfjs
+        model_path = os.path.join(save_dir, "model_tfjs")
+        os.makedirs(model_path, exist_ok=True)  # 保存先のフォルダを作成
+        tfjs.converters.save_keras_model(model, model_path)
+
+
 
     # 学習成果のチェックとして、検証データに対して分割表を作成し、正解・不正解のリストをもらう
     checked_list = check_validation(0.15, model, x_test, y_test, label_dict, 
@@ -449,6 +580,16 @@ def main():
     # メモリの後始末（必要か不明）
     tf.keras.backend.clear_session()
     gc.collect()
+
+
+    # ファイルの後始末
+    if setting["remove_after_train"]["enable"]:
+        print("--- file removing start... ---")
+        pattern = os.path.join(save_dir, setting["remove_after_train"]["pattern"])
+        for p in glob.glob(pattern):
+            if os.path.isfile(p):
+                os.remove(p)
+                print(f"remove: {p}")
 
 
     print("経過時間[s]：", time.time() - start)
