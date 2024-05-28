@@ -85,8 +85,8 @@ JPBirdSongClassificationはVGG16をベースの野鳥の鳴き声を識別する
 <details>
 <summary>Pythonのインストール</summary>
 https://www.python.org/  
-からPython Python 3.9をインストールします。
-（TensorflowはPython 3.10でも動くという報告はあるが公式は3.9まで）
+からPython Python 3.10をインストールします。
+（TensorflowはPython 3.10で動く。ただし、3.11以上は未対応なので注意。）
 just meモードが良いでしょう。
 </details>
   
@@ -146,6 +146,8 @@ $ pip install -r requirements.txt
 ```bash 
 $ py -m pip install -r requirements.txt  
 ```
+
+なお、requirements.txtにはPythonに必要なライブラリが記載されています。このファイル内にはtensorflowのバージョンを2.10を指定していますが、これは素のWindows用の設定です。WindowsでもWSLを使って動かす場合や、UbuntuやMacOS上で動かす場合はこの制限を外しても大丈夫です。ただし、GPUを使う場合は、インストールするtensorflowのバージョンとCUDAのバージョンに整合性が必要ですのでご注意ください。  
 </details>
 
 
@@ -273,8 +275,8 @@ $ py evaluate.py
 </details>
 
 
-## <div align="center">お問い合わせ</div>
-JPBirdSongClassificationのバグや将来へのリクエストがあれば、[GitHub issues](https://github.com/KatsuhiroMorishita/JPBirdSongClassification/issues)に書き込みをお願いします。
+## <div align="center">リクエスト・お問い合わせ</div>
+JPBirdSongClassificationのバグや将来へのリクエストがあれば、[GitHub issues](https://github.com/KatsuhiroMorishita/JPBirdSongClassification/issues)に書き込みをお願いします。対応して欲しい外来種等の情報でも構いません。  
 
 
 ## <div align="center">ライセンス（jp）</div>
