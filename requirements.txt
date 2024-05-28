@@ -1,7 +1,12 @@
-tensorflow
-pandas
-opencv-python
-scikit-image
-pyyaml
+tensorflow==2.10
 librosa
+pandas
+openpyxl
+xlwt
+matplotlib
+pyyaml
+scikit-image
+opencv-python
+pillow
+tqdm
 numba
