@@ -250,7 +250,16 @@ Excelで開くと、左から音源のパス、切り出し開始時間\[秒\]�
 
 ### 評価
 評価結果がどの程度の性能を示しているのか、[PR-AUC、ROC-AUC、F値](https://tech.ledge.co.jp/entry/metrics)により評価します。
-評価には尤度を保存したファイル「prediction_likelihoods\*.csv」が必要です。
+評価には、予測処理で得られた尤度を保存したファイル「prediction_likelihoods\*.csv」と、音源ファイルのパスと鳴き声の区間が記された正解ファイルが必要です。正解ファイルの例としては、フォルダdata/timelist内のテキストファイルをご覧ください。
+
+<details>
+<summary>正解ファイルのフォーマット</summary>  
+
+```  
+# 音源ファイルのパス,鳴き声が始まる最初の時間\[秒\],鳴き声の時間幅\[秒\],以降繰り返し・・・
+yanbal.wav,103.0,48.9,158.0,12.8,183.2,61.3
+```
+</details>
 
 <details>
 <summary>評価処理の実行</summary>
