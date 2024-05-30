@@ -184,7 +184,7 @@ $ !git clone https://github.com/KatsuhiroMorishita/JPBirdSongClassification.git
 
 学習処理は、下記のコマンドで実行します。  
 ```bash
-$ pyton train.py  
+$ python train.py  
 ```
 
 または、  
@@ -208,7 +208,7 @@ $ py train.py
 
 予測処理は、下記のコマンドで実行します。  
 ```bash
-$ pyton predict.py  
+$ python predict.py  
 ```
 
 または、  
@@ -269,7 +269,7 @@ yanbal.wav,103.0,48.9,158.0,12.8,183.2,61.3
 
 学習処理は、下記のコマンドで実行します。  
 ```bash
-$ pyton evaluate.py  
+$ python evaluate.py  
 ```
 
 または、  
