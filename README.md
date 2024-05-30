@@ -142,7 +142,7 @@ $ cd JPBirdSongClassification
 $ pip install -r requirements.txt  
 ```
 
-ただし、Pythonにパスが通っていない場合は、下記のように実行せねばなりません。
+ただし、Windows環境でPythonにパスが通っていない場合は、下記のように実行せねばなりません。
 ```bash 
 $ py -m pip install -r requirements.txt  
 ```
