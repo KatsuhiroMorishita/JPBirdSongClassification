@@ -1,4 +1,5 @@
-tensorflow == 2.10   # WindowsネイティブでGPUを使う場合は2.10までとする。それ以外の環境では最新版でOKです。 
+numpy == 1.26.4      # 2.0.0 occurs a error.
+tensorflow == 2.10   # If you are not using a GPU or are not using Windows, you do not need to specify the version.
 librosa
 resampy
 pandas
@@ -13,5 +14,5 @@ opencv-python
 Pillow
 numba
 ephem
-natsorted
+natsort
 levenshtein
