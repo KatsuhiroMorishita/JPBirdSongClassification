@@ -142,7 +142,7 @@ $ cd JPBirdSongClassification
 $ pip install -r requirements.txt  
 ```
 
-ただし、Pythonにパスが通っていない場合は、下記のように実行せねばなりません。
+ただし、Windows環境でPythonにパスが通っていない場合は、下記のように実行せねばなりません。
 ```bash 
 $ py -m pip install -r requirements.txt  
 ```
@@ -184,7 +184,7 @@ $ !git clone https://github.com/KatsuhiroMorishita/JPBirdSongClassification.git
 
 学習処理は、下記のコマンドで実行します。  
 ```bash
-$ pyton train.py  
+$ python train.py  
 ```
 
 または、  
@@ -208,7 +208,7 @@ $ py train.py
 
 予測処理は、下記のコマンドで実行します。  
 ```bash
-$ pyton predict.py  
+$ python predict.py  
 ```
 
 または、  
@@ -256,7 +256,7 @@ Excelで開くと、左から音源のパス、切り出し開始時間\[秒\]�
 <summary>正解ファイルのフォーマット</summary>  
 
 ```  
-# 音源ファイルのパス,鳴き声が始まる最初の時間\[秒\],鳴き声の時間幅\[秒\],以降繰り返し・・・
+# 音源ファイルのパス,鳴き声が始まる時間（秒）,鳴き声の時間幅（秒）,以降繰り返し・・・
 yanbal.wav,103.0,48.9,158.0,12.8,183.2,61.3
 ```
 </details>
@@ -269,7 +269,7 @@ yanbal.wav,103.0,48.9,158.0,12.8,183.2,61.3
 
 学習処理は、下記のコマンドで実行します。  
 ```bash
-$ pyton evaluate.py  
+$ python evaluate.py  
 ```
 
 または、  
