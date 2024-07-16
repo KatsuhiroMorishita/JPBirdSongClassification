@@ -42,3 +42,7 @@ CAM:
   enable: False
   class_name: "ootoratsugumi"
   last_conv_layer_name: "block5_conv3"
+
+
+# 並列演算の設定
+process_num: 1       # 予測演算に使用するプロセスの数。1なら並列演算処理を実行しない。

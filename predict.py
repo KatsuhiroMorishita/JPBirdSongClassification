@@ -43,10 +43,27 @@
 #  2024-03-19        軽微なバグを修正した。
 #                    引数で処理対象のファイルをリスト形式で指定できるようにして、更にCAMの有効・無効も制御できるようにした。
 #  2024-04-01        引数処理のバグを修正
-#  2024-04-11        複数の音源を予測する場合に、残りの処理時間を表示するようにした。
+#  2024-04-11        複数の音源ファイルを予測する場合に、残りの処理時間を表示するようにした。
+#  2024-07-05        CPUしか使えない場合に処理速度を上げるために、並列処理が可能なように変更
+#                    以下、試験結果
+#   Test result =======================
+#    Test env. CPU: Core i7-11700K, GPU: RTX3060
+#     CPUのみで処理した場合
+#      並列処理を明示せず 186 sec
+#      4スレッド　143 sec
+#     GPUを利用して処理した場合
+#      2スレッド 176 sec
+#      4スレッド 172 sec
+#      並列処理を明示せず 1回目　119 sec
+#      並列処理を明示せず 2回目　115 sec
+#   ===================================
+#                   テストに使った音源には極端に大きいものもあったので、CPUのみの並列処理時間は実際にはもう少し早いと思う。
+#                   結論としては、GPUが使えるなら並列処理にしないほうが速い。これ以上の速度が必要なら、計算機を複数使用したほうがいい。
+#                   １台のマシンでGPUが１つしかないなら、プロセスは分割しないほうがいい。
 # author: Katsuhiro Morishita
 # created: 2019-10-29
-import sys, os, re, glob, copy, time, pickle, pprint, argparse, traceback, ast
+import sys, os, re, glob, copy, time, pickle, pprint, argparse, traceback, ast, time, random
+from multiprocessing import Process, Pipe
 from datetime import datetime as dt
 from datetime import timedelta as td
 import numpy as np
@@ -201,12 +218,13 @@ class Discriminator:
             dir_path, fname = os.path.split(model_path)
             name, ext = os.path.splitext(fname)    # モデルのファイル名から拡張子を除いたものを取得
         self.model_name = name.replace(".", "").replace("_", "")   # ドット.とアンダーバー_は無視する
-        self.fname_result = os.path.join(save_dir, "prediction_result_{}.csv".format(name))
-        self.fname_likelihoods = os.path.join(save_dir, "prediction_likelihoods_{}.csv".format(name))
+        self.fname_result = ""
+        self.fname_likelihoods = ""
 
         # 保存先のフォルダを作成
         if save_dir != "." and save_dir != "":
             os.makedirs(save_dir, exist_ok=True)
+        self.save_dir = save_dir
 
         # その他
         self.fw_result = None
@@ -253,9 +271,12 @@ class Discriminator:
         self.predict_dummy()
 
 
-    def init_save_files(self):
+    def init_save_files(self, identifer=""):
         """ ファイルの初期化（項目名を入れる）
         """
+        self.fname_result = os.path.join(self.save_dir, f"prediction_result_{self.model_name}{identifer}.csv")
+        self.fname_likelihoods = os.path.join(self.save_dir, f"prediction_likelihoods_{self.model_name}{identifer}.csv")
+
         c_names = self.class_names
         with open(self.fname_result, "w", encoding="utf-8-sig") as fw:  # 尤度を閾値で二値化した識別結果を保存するファイル
             names = ["class{}".format(i) for i in range(len(c_names) - 1)]    # ラベルのNDを無視するために、-1
@@ -364,10 +385,10 @@ class Discriminator:
 
     def __save(self, tags, results=None, likelihoods=None):
         # ファイルの準備
-        if self.fw_result is None:
+        if self.fw_result is None and self.fname_result != "":
             self.fw_result = open(self.fname_result, "a", encoding="utf-8-sig")
 
-        if self.fw_likeliboods is None:
+        if self.fw_likeliboods is None and self.fname_likelihoods != "":
             self.fw_likeliboods = open(self.fname_likelihoods, "a", encoding="utf-8-sig")
 
 
@@ -417,11 +438,14 @@ class Discriminator:
         """
         if self.fw_result:
             self.fw_result.close()
-            self.fw_result = None
 
         if self.fw_likeliboods:
             self.fw_likeliboods.close()
-            self.fw_likeliboods = None
+
+        self.fw_result = None
+        self.fw_likeliboods = None
+        self.fname_result = ""
+        self.fname_likelihoods = ""
 
 
 
@@ -798,6 +822,174 @@ def read_models(dir_path, img_size, th, model_format=".hdf5", label_pattern="lab
 
 
 
+
+def predict_sub(fnames, setting, conn1=None, conn2=None, id_=0):
+    """ 予測処理を行う
+    """
+    # 識別器の準備
+    models = setting["models"]
+    if models == "all":   # カレントディレクトリ内の全ディレクトリ直下の場合
+        dirs = os.listdir() + ["."]
+    elif models == "last train":         # 最後の学習フォルダを指定された場合
+        dirs = [last_dirpath("train")]   # 最後に保存されている学習結果の保存フォルダ内のモデルを探させる
+    else:
+        dirs = models   # ディレクトリパスのリストの場合
+
+    discriminators = []
+    for dir_path in dirs:
+        dis_ = read_models(dir_path, setting["size"], setting["th"], 
+                        model_format=setting["model_format"], 
+                        label_pattern=setting["label_pattern"], 
+                        save_dir=setting["save_dir"],
+                        custom_objects=setting["custom_objects"],
+                        CAM=setting["CAM"]
+                        )
+        discriminators += dis_
+
+    if len(discriminators) == 0:
+        print(f"ID {id_}: 0 models or 0 label dictionary founded. Check your setting file.")
+    else:
+        print(f"ID {id_}: {len(discriminators)} models founded.")
+
+
+    
+    # 識別器があれば、予測処理開始
+    if len(discriminators) != 0:
+        # 保存用のファイルを用意
+        for dis in discriminators:
+            identifer = ""
+            if id_ >= 0:
+                identifer = f"_ID{id_}"
+            dis.init_save_files(identifer=identifer)
+
+        # ファイルを処理
+        ts = time.time()
+        if setting["mode"] == "sound":            # 音声ファイルを予測
+            for i, fname in enumerate(fnames):    # 音声ファイルはサイズが大きいので、音声ファイルごとに処理
+                # 残りの処理時間を表示
+                if i >= 1:
+                    tn = time.time()
+                    last_time = td(seconds=((tn - ts) / i * (len(fnames) - i)))
+                    print(f">>>{i + 1}/{len(fnames)}, pass:{int(tn - ts)} sec., last:{last_time}.")
+
+                try:             # たまにエラーが発生するので、その対応
+                    predict_sound(fname, setting, discriminators)  # 予測の実行
+                except Exception as e:
+                    print("### error ###")
+                    # エラー状況をファイルに残す
+                    with open(f"error_predict_ID{id_}.log", "a", encoding="utf-8-sig") as fw:
+                        fw.write("### {} ###\n".format(str(dt.now())))
+                        fw.write(f"{fname}\n")
+                        fw.write(f"cause: {e}\n")
+                        fw.write("{}\n".format(traceback.format_exc()))
+        elif setting["mode"] == "image":  # 画像を予測
+            predict_images(fnames, setting, discriminators)
+        
+
+
+        # ファイルを閉じる
+        for dis in discriminators:
+            dis.close_file()
+    else:
+        print("There is no discriminator.")
+
+
+    # （可能なら）親プロセスに終了をお知らせ
+    if conn1 is not None:
+        conn1.send(f"id:{id_} is fin.")
+
+
+
+
+def predict_main(setting):
+    """ 並列処理による予測処理を行う
+    プロセスの作成には時間がかかるので、1プロセスしか実行しない場合はこの関数ではなく、predict_sub()を呼び出した方が良い。
+    """
+    # 処理対象音源の分割
+    process_num = setting["process_num"]     # 並列にする数
+    if process_num < 0:
+        process_num = 1
+    fnames = sorted(setting["file_names"])    # 処理対象ファイルをソート
+    print(fnames[:10])
+
+    size = len(fnames) // process_num
+    fnames_list = [fnames[i*size : (i+1)*size] for i in range(process_num)]
+    if size * len(fnames_list) < len(fnames):
+        fnames_list[-1] += fnames[size * len(fnames_list):]  # 余った分は最期のリストに加える
+
+    # 子プロセスの作成と実行
+    child_process = []
+    for i in range(process_num):
+        parent_conn, child_conn = Pipe(True)    # 子プロセスとの間の通信に使うオブジェクトの作成
+        child = Process(target=predict_sub, args=(fnames_list[i], setting, parent_conn, child_conn, i))
+        child_process.append((parent_conn, child_conn, child))
+        child.start()
+
+    # 子プロセスの終了を待つ
+    fin_count = 0
+    while fin_count < process_num:
+        for i in range(process_num):
+            conn1, conn2, c = child_process[i]
+            #print(conn1.poll(), conn2.poll())
+
+            if conn2.poll():
+                recv = conn2.recv()
+
+                print("子プロセスからの受信:{}\n".format(recv))
+                c.join()
+                print(f"process {i} is fin.\n")
+
+                fin_count += 1
+
+
+
+def fusion_results(save_dir, pattern):
+    """ 予測結果のファイルの統廃合
+    """
+    # 処理対象のファイルを探す
+    fnames_all = glob.glob(os.path.join(save_dir, "*/" + pattern))
+    if len(fnames_all) == 0:
+        return
+
+    # フォルダの一覧を作成
+    dirs = [os.path.basename(os.path.dirname(fpath)) for fpath in fnames_all]
+    dirs = natsorted(set(dirs))
+
+    for dir_ in dirs:
+        fnames = natsorted([name for name in fnames_all if dir_ in name])
+        if len(fnames) == 0:
+            continue
+
+        # 複数ファイルのテキストを結合
+        lines = []
+        head = ""
+        for fname in fnames:
+            with open(fname, "r", encoding="utf-8-sig") as fr:
+                lines_ = fr.readlines()
+                lines_ = [x.rstrip() for x in lines_]   # 残っている余計な改行コードを削除
+                head = lines_[0]
+                lines += lines_[1:]
+        lines = [head] + lines
+
+        # 保存するファイル名を作成
+        basename = os.path.basename(fnames[0])
+        fname_new = basename.split("_ID")[0] + ".csv"
+        fpath_new = os.path.join(save_dir, dir_, fname_new)
+
+        # 保存
+        with open(fpath_new, "w", encoding="utf-8-sig") as fw:
+            fw.write("\n".join(lines))
+
+        # 元ファイルを削除
+        for fpath in fnames:
+            os.remove(fpath)
+
+
+
+
+
+
+
 # https://note.nkmk.me/python-bool-true-false-usage/#bool-bool
 def strtobool(val):
     """Convert a string representation of truth to true or false.
@@ -896,6 +1088,8 @@ def set_default_setting():
     params["CAM"] = {"enable":False,    # 識別結果の根拠を可視化する場合はTrue
                      "class_name": "", 
                      "last_conv_layer_name":""}  # 最期の畳み込み層の名前。CAMによるヒートマップを保存する場合に指定すること。
+
+    params["process_num"] = 1       # 予測演算に使用するプロセスの数。1なら並列演算処理を実行しない。
     return params
 
 
@@ -988,6 +1182,9 @@ def read_setting(fname):
 
 
 
+
+
+
 def main():
     # 設定を読み込み
     setting = read_setting("predict_setting.yaml")
@@ -1020,37 +1217,17 @@ def main():
         # CPUを使う場合
         os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
-    # 識別器の準備
-    discriminators = []
-    models = setting["models"]
-    if models == "all":   # カレントディレクトリ内の全ディレクトリ直下の場合
-        dirs = os.listdir() + ["."]
-    elif models == "last train":         # 最後の学習フォルダを指定された場合
-        dirs = [last_dirpath("train")]   # 最後に保存されている学習結果の保存フォルダ内のモデルを探させる
-    else:
-        dirs = models   # ディレクトリパスのリストの場合
+    
     
     # 保存先のフォルダ名の準備
     save_dir = next_dirpath("predict")   # 結果の保存先
     if setting["tag"] != "":
         save_dir += f"_{setting['tag']}"
+    setting["save_dir"] = save_dir
 
-    for dir_path in dirs:
-        dis_ = read_models(dir_path, setting["size"], setting["th"], 
-                        model_format=setting["model_format"], 
-                        label_pattern=setting["label_pattern"], 
-                        save_dir=save_dir,
-                        custom_objects=setting["custom_objects"],
-                        CAM=setting["CAM"]
-                        )
-        discriminators += dis_
-
-    if len(discriminators) == 0:
-        print("0 models or 0 label dictionary founded. Check your setting file.")
-        exit()
-    else:
-        print(f"{len(discriminators)} models founded.")
-
+    # 保存先のフォルダを作成
+    if save_dir != "." and save_dir != "":
+        os.makedirs(save_dir, exist_ok=True)
 
     # 設定の保存（後でパラメータを追えるように）
     now_ = dt.now().strftime('%Y%m%d%H%M')
@@ -1058,47 +1235,17 @@ def main():
     with open(fname, 'w', encoding="utf-8-sig") as fw:
         yaml.dump(setting, fw, encoding='utf8', allow_unicode=True)
 
-    
-    # 識別器があれば、処理開始
-    if len(discriminators) != 0:
-        # 保存用のファイルを用意
-        for dis in discriminators:
-            dis.init_save_files()
 
-        # 予測
-        fnames = sorted(setting["file_names"])    # 処理対象ファイルをソート
-        print(fnames[:10])
+    # 予測処理を実行
+    if setting["process_num"] > 1:
+        predict_main(setting)
 
-        # ファイルを処理
-        ts = time.time()
-        if setting["mode"] == "sound":            # 音声ファイルを予測
-            for i, fname in enumerate(fnames):    # 音声ファイルはサイズが大きいので、音声ファイルごとに処理
-                # 残りの処理時間を表示
-                if i >= 1:
-                    tn = time.time()
-                    last_time = td(seconds=((tn - ts) / i * (len(fnames) - i)))
-                    print(f">>>{i + 1}/{len(fnames)}, pass:{int(tn - ts)} sec., last:{last_time}.")
-
-                try:             # たまにエラーが発生するので、その対応
-                    predict_sound(fname, setting, discriminators)  # 予測の実行
-                except Exception as e:
-                    print("### error ###")
-                    # エラー状況をファイルに残す
-                    with open("error_predict.log", "a", encoding="utf-8-sig") as fw:
-                        fw.write("### {} ###\n".format(str(dt.now())))
-                        fw.write(f"{fname}\n")
-                        fw.write(f"cause: {e}\n")
-                        fw.write("{}\n".format(traceback.format_exc()))
-        elif setting["mode"] == "image":  # 画像を予測
-            predict_images(fnames, setting, discriminators)
-        
-
-
-        # ファイルを閉じる
-        for dis in discriminators:
-            dis.close_file()
+        # 予測結果のファイルの統廃合
+        fusion_results(save_dir, "prediction_result_*ID*.csv")
+        fusion_results(save_dir, "prediction_likelihoods_*ID*.csv")
     else:
-        print("There is no discriminator.")
+        predict_sub(sorted(setting["file_names"]), setting, id_=-1)
+
 
     # 修了処理
     tf.keras.backend.clear_session()
