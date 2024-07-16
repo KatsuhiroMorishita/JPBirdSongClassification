@@ -281,7 +281,12 @@ $ py evaluate.py
 
 </details>
 
-</details>
+
+
+### 予測結果を使った様々な処理
+ディレクトリutilsは、予測結果「prediction_likelihoods*.csv」を用いて、スペクトログラム画像を作製したり、その画像を分類した後に正解リストを作製したり、検出された時期や時間帯を可視化するツールを格納しています。
+詳細は[utils](https://github.com/KatsuhiroMorishita/JPBirdSongClassification/tree/main/utils)をご覧ください。
+
 
 
 ## <div align="center">リクエスト・お問い合わせ</div>
