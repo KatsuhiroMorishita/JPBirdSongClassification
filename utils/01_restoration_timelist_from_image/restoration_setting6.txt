@@ -1,0 +1,11 @@
+# 画像のパスを取得
+# 例 glob.glob(r"./*/*.png") , glob.glob(r"../03_save_spectrogram/*/*.png")
+target_images, glob.glob(r"../03_save_spectrogram/*/*.png") 
+
+＃ 画像の作成に使用された音源ファイルのパス一覧
+audio_files, glob.glob(r"\\10.105.2.29\Public\morishita_lab_nitk\野鳥の鳴き声による識別\experiment\20211204_okinawa/*/*.mp3")
+
+# パスの置換ルール
+# 例：　{"mp3": "wav"}　など。結果保存する直前に、一部を置換したい場合に指定する。
+exchange_dict, {}    　
+

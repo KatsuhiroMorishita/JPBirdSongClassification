@@ -1,0 +1,57 @@
+﻿CAM:
+  class_name: ootoratsugumi
+  enable: false
+  last_conv_layer_name: block5_conv3
+GPU: false
+batch_size: 100
+custom_objects:
+  focal_loss: null
+file_names:
+- ./data/sounds\kumamoto_ashikita_soshicho_uguisu.wav
+- ./data/sounds\kumamoto_ashikita_tsutsudori.wav
+- ./data/sounds\kumamoto_kumamoto_hiyodori_aburazemi_tsukutsukuboushi.wav
+- ./data/sounds\kumamoto_kumamoto_kawarahiwa.wav
+- ./data/sounds\kumamoto_tamana_hohjiro.wav
+- ./data/sounds\kumamoto_tensui_hibari_karasu.wav
+- ./data/sounds\kumamoto_yatsushioro_hashibosogarasu_ikaru.wav
+- ./data/sounds\kumamoto_yatsushioro_nihonjika.wav
+- ./data/sounds\kumamoto_yatsushiro_hiyodori.wav
+- ./data/sounds\kumamoto_yatsushiro_hototogisu_hashibosokarasu.wav
+- ./data/sounds\kumamoto_yatsushiro_ikaru.wav
+- ./data/sounds\kumamoto_yatsushiro_kibitaki.wav
+- ./data/sounds\kumamoto_yatsushiro_uguisu_mejiro_hiyodori.wav
+- ./data/sounds\kumamoto_yatsushiro_yabusame.wav
+- ./data/sounds\kumamoto_yatsushiro_yamagara_shijukara.MP3
+- ./data/sounds\okinawa_kunigami_yanbarukuina.wav
+hop: 0.0251
+imagegen_params:
+  fmax: 22000
+  n_fft: 2048
+  n_mels: 120
+  noise: 0.0
+  raw: true
+  sr: 44100
+  top_remove: 0
+label_pattern: label*.pickle
+load_mode: kaiser_fast
+loss: local.focal_loss
+lr: ''
+mode: sound
+model_format: SavedModel
+models:
+- ./models/model202406
+preprocess_chain:
+- !!python/name:__main__.preprocessing ''
+- !!python/name:__main__.preprocessing3 ''
+process_num: 3
+save_dir: ./runs\predict6
+save_img: false
+shift_rate: 1
+size:
+- 200
+- 120
+- 3
+tag: ''
+targets: []
+th: 0.6
+window_size: 5

@@ -1,0 +1,33 @@
+tag: ""   # 特定の種に絞って出力したい場合は指定する。リストでもOK。指定しない場合は、""とすること。 例:["akahige1", "kuina"]
+likelihood_file: "../*/prediction_likelihoods*.csv"    # 処理対象の、尤度の一覧を格納した識別結果csvファイルのパス（例では、パターンでマッチする様に設定）
+th: 0.5
+datetime_method: "timestamp"   # ファイル名から日時を抽出するための処理方法。　"normal" or "SF" or "timestamp"
+                               # ex. normal: 240115_1230    （2024/01/15 12:30）
+                               # ex. SF: 20240115123021     （2024/01/15 12:30:21）
+basedir_separation: True
+image_source: "../03_save_spectrogram/*"    # "./*"　これでサブフォルダ内の画像全ての指定となる。
+source: "likelihood_file"   # "likelihood_file" or "image"
+audio_source: ""   # 画像の作製に使われた音源の検索パターン。 "../../../data/sounds/*"　や　/sample/*.mp2　など。 ""で無視される。
+min_limit: 20      # 検出数に対する閾値。これ以下だと保存されない。
+save_dir: "out"    # 保存先のフォルダ。　"."でカレントディレクトリを指す。
+path_replace: [["", ""]]  # 処理の前に、ファイルのパスに含まれる文字列を置換する場合に指定する。音源の位置を変えたときや、予測とは別のマシンで処理する場合等に利用してください。
+                              # 例：[["G:", "L:"]]
+stat1:  # 日毎・週ごと・月ごとで検出数を集計して、表とグラフを保存
+  available: True
+  target: ["daily", "weekly", "monthly"]
+
+
+stat2:   # 音源毎の検出数を一定時間ごとに並べたcsvファイルを作成
+  available: True
+  extend_times: 3
+  shrink_times: 3
+  time_step: 1
+
+
+stat3:                       # 検出されたフレームの時刻の散布図作製
+  available: True
+  lat: "28.377691449903196"  # 観測場所の緯度経度
+  lon: "129.4939655902835"
+  city: "Tokyo"              # time zone
+
+

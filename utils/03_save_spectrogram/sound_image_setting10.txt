@@ -1,0 +1,19 @@
+file_names,glob.glob(r"D:\sounds\ヤンバルクイナC_クリリャー/*.avi")
+root,"kotaka"   # 保存先のフォルダ名
+term, 5       # -1だと音源全体でスペクトログラム画像を作るが、数字を渡すとその時間幅[s]で画像を作る
+hop, 0.0251   # 作る画像の時間分解能[s]
+sr, 44100
+n_mels, 120
+fmax, 22000
+shift_rate, 0.5
+top_remove, 0
+
+
+#emphasize_band, [2500, 4500, 0.1]  # 強調する帯域
+#cut_band, [(15500, 220000, "lower")]      # カットする帯域
+#path_replace, [r"\\10.105.3.46\Public\morishita_lab_nitk\野鳥の鳴き声による識別\code\音源ファイルからスペクトログラム保存。区間リスト利用可", r"C:\Users\morishita\Desktop\20180906_okinawa"]      # パスを書き換える場合
+
+raw, True        # スペクトログラムに生の音声の振幅情報を埋め込むかどうか。Trueで埋め込む。
+
+
+location_save_only, False
