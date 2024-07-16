@@ -1,13 +1,17 @@
-tensorflow==2.10
+tensorflow == 2.10   # WindowsネイティブでGPUを使う場合は2.10までとする。それ以外の環境では最新版でOKです。 
 librosa
+resampy
 pandas
 openpyxl
 xlwt
 matplotlib
+japanize_matplotlib
 pyyaml
 scikit-image
+scikit-learn
 opencv-python
-pillow
-tqdm
+Pillow
 numba
-resampy
+ephem
+natsorted
+levenshtein
