@@ -66,10 +66,9 @@ def get_location_ID(file_path, id_size=4):
 
 
 
-def split_fname(path_image, ext):
+def split_fname(path_image):
     """ スペクトログラム画像のファイル名のパスから、画像ファイル名単体と元音源ファイルのファイル名とIDと抜出時間のタプルを返す
     path_image: str, 画像ファイルのパス名
-    ext: str, 音源の拡張子。例：".mp3"
     """
     fname_image = os.path.basename(path_image)         # ファイル名取り出し
     dummy, loc, name_and_times = re.split(r'_{2,4}', fname_image, 2)  # __で分割
@@ -77,14 +76,11 @@ def split_fname(path_image, ext):
     # ファイル名と時間区間の取得（ファイル名の中に__があっても対応）
     name_and_times_mirror = name_and_times[::-1]
     time_mirror, name_mirror = re.split(r'_{2,4}', name_and_times_mirror, 1)
-    name = name_mirror[::-1]
+    fname_music = name_mirror[::-1]
     times = time_mirror[::-1]                    # この時点では拡張子が含まれる
     time_pair, ext2 = os.path.splitext(times)    # 拡張子を分離
     #print(">>>> ", time_pair)
     t_start, t_width = time_pair.split("_")[:2]      # _で分離（たまにファイルのコピーしたやつがあるので、2つだけ取り出す
-
-    # 音源ファイルのフルパスを作成
-    fname_music = name + ext.lower()
 
     return (fname_image, fname_music, loc, float(t_start), float(t_width))
 
@@ -164,48 +160,48 @@ class audio_matcher:
         return fname
 
 
-    def __match(self, image_file_path, ext=".mp3"):
+    def __match(self, fname_music, loc, ext=".mp3"):
         """ 引数で渡された画像ファイル（のパス）に合致する音源を探し、その結果を返す
+        fnae_music: str, 音源のファイル名。拡張子は除く。
+        loc: str, 音源の場所（ディレクトリ）を区別するID
+        ext: str, 音源の拡張子。例：".mp3"
         """
         if self.ready == False:
             return "", "no audio", 0, 0, 0
 
         # 検索に必要な情報を作成
-        fname_img, fname_music, loc, ts, tw = split_fname(image_file_path, ext)   # 画像ファイルのファル名を分解
-        name, ext = os.path.splitext(fname_music)
-        fname_music = self.__clean_fname(name) + ext
-        key = (loc, fname_music)   # 辞書から音源ファイルのパスを取り出すためのキーを作成
-        te = ts + tw
+        fname_music_with_ext = self.__clean_fname(fname_music) + ext.lower()
+        key = (loc, fname_music_with_ext)   # 辞書から音源ファイルのパスを取り出すためのキーを作成
 
         # 検索
         if key in self.id_dict2:     # 辞書内に完全に合致する物があれば、それを返す。音源の親フォルダをその名前のハッシュ値4桁で区別するのでほぼ間違いない。
             #print("this file is matched.", fname_img)
             path_music = self.id_dict2[key]
-            return path_music, "best", ts, te, tw
+            return path_music, "best"
         
         elif key in self.id_dict1:     # 辞書内に合致する物があれば、それを返す。音源の親フォルダをその名前のハッシュ値2桁で区別するので、ファイル名が同じ場合にたまに間違える。
             #print("this file is matched.", fname_img)
             path_music = self.id_dict1[key]
-            return path_music, "best", ts, te, tw
+            return path_music, "best"
 
         else:
             # 類似したファイルを探す
             ## 一致するファイル名があるかどうかだけで検査（複数のフォルダに同じファイル名の音源があると一致しない事の方が多いだろうから注意）
-            if fname_music in self.fname_dict:      
-                path_music = self.fname_dict[fname_music]
-                return path_music, "weak", ts, te, tw
+            if fname_music_with_ext in self.fname_dict:      
+                path_music = self.fname_dict[fname_music_with_ext]
+                return path_music, "weak"
 
             else:
                 ## ファイル名の類似性で突き合わせる（音源のファイル名を一部変更していた場合に役に立つと思う）
-                name_head = fname_music[:17]
+                name_head = fname_music_with_ext[:17]
                 scores = np.array([Levenshtein.ratio(name_head, x) for x in self.fname_trimeds])
                 i = np.argmax(scores)
                 score = scores[i]
                 if score > 0.7:
                     path_music = self.audio_files[i]
-                    return path_music, "weak", ts, te, tw
+                    return path_music, "weak"
 
-        return "", "no match", ts, te, tw
+        return "", "no match"
 
 
     def match(self, image_file_path):
@@ -213,6 +209,8 @@ class audio_matcher:
         辞書でマッチするものがあれば（best）、それを返す。
         同名で拡張子だけが違う音源があれば、.wavを優先して返す。
         """
+        fname_img, fname_music, loc, ts, tw = split_fname(image_file_path)   # 画像ファイルのファル名を分解
+        te = ts + tw
         image_file_path_temp = os.path.join(os.path.basename(os.path.dirname(image_file_path)), os.path.basename(image_file_path))
 
         # キャッシュを確認し、あればそれを返す
@@ -221,39 +219,34 @@ class audio_matcher:
         key = name_mirror[::-1]
 
         if key in self.cache:
-            return self.cache[key]
+            return (self.cache[key], ts, te, tw)
 
 
         # キャッシュがない場合は、マッチするものを探す
-        audio_path1, condition1, ts, te, tw = self.__match(image_file_path, ".wav")
-        audio_path2, condition2, ts, te, tw = self.__match(image_file_path, ".mp3")
+        audio_path1, condition1 = self.__match(fname_music, loc, ".wav")
+        audio_path2, condition2 = self.__match(fname_music, loc, ".mp3")
 
         # 最も妥当な検索結果を返す
         if condition1 == "best":
             print(f"  Best match file: {image_file_path_temp} --is-- {audio_path1}　.")
-            ans = (audio_path1, ts, te, tw)
-            self.cache[key] = ans
-            return ans
+            self.cache[key] = audio_path1
+            return (audio_path1, ts, te, tw)
         elif condition2 == "best":
             print(f"  Best match file: {image_file_path_temp} --is-- {audio_path2}　.")
-            ans = (audio_path2, ts, te, tw)
-            self.cache[key] = ans
-            return ans
+            self.cache[key] = audio_path2
+            return (audio_path2, ts, te, tw)
         elif condition1 == "weak":
-            print(f"  ★Weak match file: {image_file_path_temp} --is-- {audio_path1}　かもしれない。")
-            ans = (audio_path1, ts, te, tw)
-            self.cache[key] = ans
-            return ans
+            print(f"  ★ Weak match file: {image_file_path_temp} --is-- {audio_path1}　かもしれない。")
+            self.cache[key] = audio_path1
+            return (audio_path1, ts, te, tw)
         elif condition2 == "weak":
-            print(f"  ★Weak match file: {image_file_path_temp} --is-- {audio_path2}　かもしれない。")
-            ans = (audio_path2, ts, te, tw)
-            self.cache[key] = ans
-            return ans
+            print(f"  ★ Weak match file: {image_file_path_temp} --is-- {audio_path2}　かもしれない。")
+            self.cache[key] = audio_path2
+            return (audio_path2, ts, te, tw)
         else:
             print(f"  No match file: {image_file_path_temp}.")
-            ans = ("", ts, te, tw)
-            self.cache[key] = ans
-            return ans
+            self.cache[key] = ""
+            return ("", ts, te, tw)
 
 
 
