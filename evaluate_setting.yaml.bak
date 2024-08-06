@@ -12,10 +12,6 @@ compare_depth: 1      # 音源ファイルから見て親フォルダまでで�
 
 
 FP_FN_list:       # 見逃しなどの区間リストを作成パラメータ
+  margin: 15      # 判定の緩さ[s]
   fusion: 10      # 検出区間の結合距離[s]
   th: [0.6, 0.8]   # リストを作成する際の尤度に対する閾値
-
-
-
-pseudo_recall_r_limit: 0.95
-pseudo_recall_th_limit: 0.15 

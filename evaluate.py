@@ -22,6 +22,9 @@
 #   2024-04-01        引数処理のバグを修正
 #   2024-05-15        区間リストを読み込む処理を更新して、対応書式を広げた。また、区間同士の比較ロジックを変更し、暫定でマージンを廃止した。
 #                     閾値ごとのPrecision/Recallを保存するようにした。
+#   2024-08-06        マージンの処理を廃止
+#                     comp2で、区間の比較ロジックを修正した。また、和集合を求めるように変更した。
+#                     正解区間と予測区間が一部でも被っていたら良しとみなす場合のFalse Negativeを求めるロジックのバグも取れたと思う。
 # author: Katsuhiro Morishita
 # created: 2020-04-27
 # license: MIT. If you use this program for your study, you should write Acknowledgement in your paper.
@@ -188,14 +191,11 @@ class DetectChecker:
     def __init__(self, time_list_dict):
         self._time_list_dict = time_list_dict
 
-    def check_time_pair(self, fpath, time_pair, margin=0):
+    def check_time_pair(self, fpath, time_pair):
         """ time_pairで指定した範囲がコンストラクタでセットされた辞書内のリストと合致するか確認し、合致するとTrueを返す
         fpath: str, 検査したいファイルのフルパス
         time_pair: list or tuple <float, float>, 開始時間[s]と時間幅[s]のペア
-        margin: float or int, 許容誤差[s]
         """
-        m = margin
-
         #print(self._time_list_dict.keys())
         #exit()
 
@@ -206,10 +206,6 @@ class DetectChecker:
             e2 = s2 + w2
             for s1, w1 in time_lists:
                 e1 = s1 + w1
-                #if (s2 >= (s1 - m) and (s2 + w2) <= (s1 + w1 + m))  or  (s1 >= (s2 - m) and (s1 + w1) <= (s2 + w2 + m)):
-                #    return True
-
-
                 if (s1 <= s2 <= e1) or (s1 <= e2 <= e1) or ((s2 <= s1) and (e2 >= e1)) :
                     return True
         else:
@@ -350,15 +346,52 @@ def to_binary(df, target_kind, th_sets, positive=True, view=False):
 
 
 
-# timelist_compare.pyより引用・改変
-def comp2(set_A_dict, set_B_dict, margin=0, view=False):
-    """ timelist同士で、積集合 A ∩ B, 差集合 B − A, 差集合 A − B を返す。第1引数がAで、第２引数がB。
+# fusion_timelist.pyより引用・改変
+def comp2(set_A_dict, set_B_dict, view=False):
+    """ 和集合 A ∪ B, 積集合 A ∩ B, 差集合 B − A, 差集合 A − B を返す。第1引数がAで、第２引数がB。
     set_A_dict: dict<str: list>, 基準となるリスト。ファイル名をkeyとして、valueには区間のリストを格納すること。
-    set_B_dict: dict<str: list>, 比較対象のリスト。構造はset_A_dictと同じ。
-    margin: float, 時間的な余白。境界部分での判定ミスを許容する場合は10程度を渡してください。
+    set_B_dict: dict<str: list>, 比較対象のリスト。構造はlist1と同じ。
     """
-    inter_ab, diff_ba, diff_ab = {}, {}, {}    # intersection（積集合）, difference（差集合）
-    m = margin
+    union_ab, inter_ab, diff_ba, diff_ab = {}, {}, {}, {}    # intersection（積集合）, difference（差集合）
+
+    # 和集合を求める（バグがあるかも）
+    fpath_A = set(set_A_dict.keys())
+    fpath_B = set(set_B_dict.keys())
+    fpath_AB = fpath_A.union(fpath_B)
+
+    for fpath in fpath_AB:
+        if fpath in set_A_dict and fpath in set_B_dict:
+            time_list1 = set_A_dict[fpath].copy()
+            time_list2 = set_B_dict[fpath].copy()
+            time_list = time_list1 + time_list2
+
+            new_list = []
+            while len(time_list) > 0:
+                s0, w0 = time_list[0]
+                e0 = s0 + w0
+
+                remove = []
+                for i, val in enumerate(time_list):
+                    s, w = val
+                    e = s + w    
+                    if s0 <= s <= e0 or s0 <= e <= e0 or (s0 <= s and e <= e0):
+                        set_ = [s, e, s0, e0]
+                        s0 = min(set_)
+                        e0 = max(set_)
+                        remove.append(i)
+
+                remove.reverse()
+                for k in remove:
+                    time_list.pop(k)
+
+                new_list.append((s0, e0 - s0))
+
+            union_ab[fpath] = new_list
+
+        elif fpath in set_A_dict:
+            union_ab[fpath] = set_A_dict[fpath].copy()
+        else:
+            union_ab[fpath] = set_B_dict[fpath].copy()
 
     # 積集合 A ∩ B、差集合 B − Aを求める
     for fpath in set_B_dict:
@@ -368,17 +401,23 @@ def comp2(set_A_dict, set_B_dict, margin=0, view=False):
             time_list1 = set_A_dict[fpath]    # 同じファイルを比較
 
             for s2, w2 in time_list2:
+                e2 = s2 + w2
                 flag = False
+
                 for s1, w1 in time_list1:
-                    if (s2 >= (s1 - m) and (s2 + w2) <= (s1 + w1 + m))  or  \
-                       (s1 >= (s2 - m) and (s1 + w1) <= (s2 + w2 + m)):
+                    e1 = s1 + w1
+                    if (s1 <= s2 <= e1) or (s1 <= e2 <= e1) or ((s2 <= s1) and (e2 >= e1)) :  # かすっていたらOK
                         flag = True
                         break
+                    #if (s2 >= (s1 - m) and (s2 + w2) <= (s1 + w1 + m))  or  \
+                    #   (s1 >= (s2 - m) and (s1 + w1) <= (s2 + w2 + m)):   # 区間が包含関係にあった場合
+                    #    flag = True
+                    #    break
 
                 if flag:
                     if fpath not in inter_ab:    # 格納したことがなければ、空のリストを用意
                         inter_ab[fpath] = []
-                    inter_ab[fpath] += [(s2, w2)]   # 区間が包含関係にあった場合
+                    inter_ab[fpath] += [(s2, w2)]
                 else:
                     if fpath not in diff_ba:
                         diff_ba[fpath] = []
@@ -400,15 +439,22 @@ def comp2(set_A_dict, set_B_dict, margin=0, view=False):
         if fpath in inter_ab and len(inter_ab[fpath]) != 0:
             time_list1 = inter_ab[fpath]
             for s2, w2 in time_list2:
+                e2 = s2 + w2
+                flag = False
+
                 for s1, w1 in time_list1:
-                    if (s2 >= (s1 - m) and (s2 + w2) <= (s1 + w1 + m))  or  (s1 >= (s2 - m) and (s1 + w1) <= (s2 + w2 + m)):
+                    e1 = s1 + w1
+                    if (s1 <= s2 <= e1) or (s1 <= e2 <= e1) or ((s2 <= s1) and (e2 >= e1)) :  # かすっていたらOK
                         flag = True
                         break
+                    #if (s2 >= (s1 - m) and (s2 + w2) <= (s1 + w1 + m))  or  (s1 >= (s2 - m) and (s1 + w1) <= (s2 + w2 + m)):
+                    #    flag = True
+                    #    break
 
                 if flag == False:
                     if fpath not in diff_ab:    # 格納したことがなければ、空のリストを用意
                         diff_ab[fpath] = []
-                    diff_ab[fpath] += [(s2, w2)]   # 区間が包含関係にあった場合
+                    diff_ab[fpath] += [(s2, w2)]
         else:
             if fpath not in diff_ab:    # 格納したことがなければ、空のリストを用意
                 diff_ab[fpath] = []
@@ -417,7 +463,7 @@ def comp2(set_A_dict, set_B_dict, margin=0, view=False):
     if view:
         print("diff_ab", diff_ab)
 
-    return inter_ab, diff_ba, diff_ab
+    return union_ab, inter_ab, diff_ba, diff_ab
 
 
 
@@ -467,7 +513,7 @@ def save_timelist(time_list, file_name):
 
 
 # timelist_compare.pyより引用・改変
-def save_diff_timelist(time_list_correct, time_list_test, margin=0, save_dir="", tag=""):
+def save_diff_timelist(time_list_correct, time_list_test, save_dir="", tag=""):
     """ 区間リストを比較し、その積集合（両方のリストに該当するもの）と差集合（いずれかのリストにしか掲載の無いもの）を保存する
     積集合は正解に相当し、差集合はFalse PositiveとFalse Negativeに相当する。
     ただし、リストの掲載漏れについては関知しないので、注意すること。
@@ -478,10 +524,11 @@ def save_diff_timelist(time_list_correct, time_list_test, margin=0, save_dir="",
     """
 
     # 比較
-    inter_ab, diff_ba, diff_ab = comp2(time_list_correct, time_list_test, margin)   # 積集合と差集合２つが得られる
+    union_ab, inter_ab, diff_ba, diff_ab = comp2(time_list_correct, time_list_test)   # 積集合と差集合２つが得られる
 
     # 結果の保存
-    save_timelist(inter_ab, os.path.join(save_dir, f"timelist_intersection_{tag}.txt"))  # A ∩ Bを保存
+    save_timelist(union_ab, os.path.join(save_dir, f"timelist_union_{tag}.txt"))            # A ⋃ Bを保存
+    save_timelist(inter_ab, os.path.join(save_dir, f"timelist_intersection_{tag}.txt"))     # A ∩ Bを保存
     save_timelist(diff_ba,  os.path.join(save_dir, f"timelist_FalsePositive_{tag}.txt"))    # B - Aを保存
     save_timelist(diff_ab,  os.path.join(save_dir, f"timelist_FalseNegative_{tag}.txt"))    # A - Bを保存
 
@@ -542,7 +589,6 @@ def arg_parse(params):
     parser.add_argument("-cf", "--correct_fpath")
     parser.add_argument("-t", "--tag")
     parser.add_argument("-ct", "--class_terget")
-    parser.add_argument("-m", "--margin")
     parser.add_argument("-lpu", "--last_predict_use")
     parser.add_argument("-bnu", "--basename_use")
     parser.add_argument("-pr", "--path_replace_for_likelifood_files")
@@ -580,7 +626,6 @@ def arg_parse(params):
     if args.correct_fpath: params["correct_fpath"] = str(args.correct_fpath)
     if args.tag: params["tag"] = str(args.tag)
     if args.class_terget: params["class_terget"] = str(args.class_terget)
-    if args.margin: params["margin"] = int(args.margin)
     if args.last_predict_use: 
         params["last_predict_use"] = strtobool(args.last_predict_use)
 
@@ -630,7 +675,6 @@ def set_default_setting():
     params["F_th"] = 0.25                     # F値を計算する際に使う閾値
     params["y_score_test"] = False   # 動作確認用に、ダミーデータと比較する場合はTrueとする
     params["graph_show"] = False     # グラフを描画するかどうか
-    params["margin"] = 10            # 正解扱いする範囲を広げるマージン
     params["basename_use"] = False   # ファイル名だけで、正解と予測結果を突き合わせるならTrue。フルパス推奨なのでFalseがデフォルト。
     params["last_predict_use"] = False  # 最後の予測フォルダ内の結果を使うならTrue
     params["path_replace_for_likelifood_files"] = None    # 例: ["2.29", "3.46"]
@@ -640,7 +684,6 @@ def set_default_setting():
         params["compare_depth"] = 0
 
     params["FP_FN_list"] = {                  # 見逃しなどの区間リストを作成パラメータ
-                            "margin":15,      # 判定の緩さ[s]
                             "fusion":0,       # 検出区間の結合距離[s]
                             "th":[0.6, 0.7, 0.8]     # リストを作成する際の尤度に対する閾値
                             }
@@ -756,7 +799,7 @@ def main():
         y_true = []
         for path_, s_, w_ in zip(fnames, s, w):
             #print(path_, s_, w_)
-            y_true.append(checker.check_time_pair(path_, (s_, w_), setting["margin"]))
+            y_true.append(checker.check_time_pair(path_, (s_, w_)))
         y_true = np.array(y_true)
 
         # 処理のサンプルが欲しい場合はこちらを実行（動作テスト用）
@@ -799,7 +842,7 @@ def main():
             for fpath2 in time_dict:
                 for time_pair in time_dict[fpath2]:
                     s_, w_ = time_pair
-                    true_num += checker_.check_time_pair(fpath2, (s_, w_), 1)
+                    true_num += checker_.check_time_pair(fpath2, (s_, w_))
                     count += 1
             if count == 0:
                 pseudo_recall = float("nan")
@@ -932,8 +975,12 @@ def main():
                 for key in list(keys):
                     full_path = df.loc[df["fname"] == key, "fname_back"].values[0]
                     time_dict_[full_path] = time_dict_.pop(key)
+
+                # 全予測結果の保存
+                save_timelist(time_dict_, os.path.join(save_dir, f"timelist_predicted_th{x}.txt"))  # A ∩ Bを保存
                 
-                counts = save_diff_timelist(time_dict_c, time_dict_, margin=setting["FP_FN_list"]["margin"], save_dir=save_dir, tag=f'{setting["class_terget"]}_th{x}')
+                # 正解リストとの比較と保存
+                counts = save_diff_timelist(time_dict_c, time_dict_, save_dir=save_dir, tag=f'{setting["class_terget"]}_th{x}')
 
                 if counts["detected"] == 0:
                     p_ = float("nan")
