@@ -16,3 +16,5 @@ numba
 ephem
 natsort
 levenshtein
+onnxruntime         # optional. 
+tf2onnx == 1.16.0   # optional. 1.16.1 has a bug.
