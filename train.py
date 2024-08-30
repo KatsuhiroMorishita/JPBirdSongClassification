@@ -24,6 +24,8 @@
 #  2024-04-01 引数処理のバグを修正
 #             引数でlossを渡せるようにした。
 #  2024-04-11 複数の条件での学習を試すために、初回の学習に使用した学習データやモデルを流用できる機能を追加した。
+#  2024-08-12 モデルの状況をテキストファイルに保存するように変更した。
+#  2024-08-20 気軽にベースモデルを切り替えられるように変更した。切り替えた際は学習係数に注意すること。
 # author: Katsuhiro MORISHITA　森下功啓
 # created: 2021-10-18
 import sys, os, re, glob, copy, time, pickle, pprint, argparse, ast, shutil
@@ -37,6 +39,9 @@ from tensorflow.keras.optimizers import SGD
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.applications.vgg16 import VGG16
+from tensorflow.keras.applications.resnet50 import ResNet50
+from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
+#from tensorflow.keras.applications.ConvNeXtBase import ConvNeXtBase   # 2022年発表なので、tensorflowも新しめでないと実装されていない
 from tensorflow.keras.applications.xception import Xception
 from PIL import Image
 import numpy as np
@@ -115,13 +120,14 @@ def next_dirpath(pattern="train", root=r'./runs'):
 
 
 
-def build_model_local(input_shape, output_dim, data_format, loss='binary_crossentropy'):
+def build_model_local(input_shape, output_dim, data_format, loss='binary_crossentropy', base_model_=VGG16):
     """ 機械学習のモデルを作成する
     入力は画像、出力はラベルという構造を想定しています。
     loss: 損失関数。多クラス多ラベル分類問題の場合、通常はbinary_crossentropyを使う
     """
     print("input_shape", input_shape)
-    base_model = VGG16(include_top=False, weights='imagenet', input_shape=input_shape)
+    base_model = base_model_(include_top=False, weights='imagenet', input_shape=input_shape)
+    base_model.trainable = True
 
     top_model = Sequential()
     top_model.add(Flatten())
@@ -131,8 +137,8 @@ def build_model_local(input_shape, output_dim, data_format, loss='binary_crossen
     top_model.add(Activation('sigmoid'))
 
     #fix weights of base_model
-    for layer in base_model.layers:
-        layer.trainable = False    # Falseで更新しない
+    #for layer in base_model.layers:
+    #    layer.trainable = False    # Falseで更新しない
 
     model = Model(inputs=base_model.input, outputs=top_model(base_model.output))
     opt = Adam(learning_rate=0.0001, beta_1=0.9, beta_2=0.999, epsilon=1e-08) # 最適化器のセット。lrは学習係数. , decay=0.0003はtensorflow2.12では不要
@@ -146,7 +152,7 @@ def build_model_local(input_shape, output_dim, data_format, loss='binary_crossen
 
 
 
-def build_model_local2(input_shape, output_dim, data_format, loss='binary_crossentropy'):
+def build_model_local2(input_shape, output_dim, data_format, loss='binary_crossentropy', base_model_=VGG16):
     """ 機械学習のモデルを作成する
     入力は画像、出力はラベルという構造を想定しています。
     build_model_localに対して、モデルの作り方が異なります。
@@ -156,7 +162,8 @@ def build_model_local2(input_shape, output_dim, data_format, loss='binary_crosse
     np.random.seed(seed=1)      # 学習条件をそろえるために乱数をリセット
     
     print("input_shape", input_shape)
-    base_model = VGG16(include_top=False, weights='imagenet', input_shape=input_shape)
+    base_model = base_model_(include_top=False, weights='imagenet', input_shape=input_shape)
+    base_model.trainable = True
 
     x = base_model.output
     x = Flatten()(x)
@@ -167,8 +174,8 @@ def build_model_local2(input_shape, output_dim, data_format, loss='binary_crosse
     model = Model(inputs=base_model.input, outputs=x)
 
     #fix weights of base_model
-    for layer in base_model.layers:
-        layer.trainable = False    # Falseで更新しない
+    #for layer in base_model.layers:
+    #    layer.trainable = False    # Falseで更新しない
 
     opt = Adam(learning_rate=0.0001, beta_1=0.9, beta_2=0.999, epsilon=1e-08) # 最適化器のセット。lrは学習係数. , decay=0.0003はtensorflow2.12では不要
     #opt = SGD(learning_rate=0.00001, momentum=0.9)
@@ -177,7 +184,6 @@ def build_model_local2(input_shape, output_dim, data_format, loss='binary_crosse
         metrics=['accuracy'])
     print(model.summary())
     return model
-
 
 
 
@@ -209,11 +215,11 @@ def arg_parse(params):
     parser.add_argument("-r", "--retry")
     parser.add_argument("-e", "--epochs")
     parser.add_argument("-i", "--initial_epoch")
-    parser.add_argument("-l", "--leranig_layerid")
+    parser.add_argument("-l", "--learnig_layer_id")
     parser.add_argument("-rat", "--remove_after_train")
     parser.add_argument("--loss")
     parser.add_argument("--reuse")
-
+    parser.add_argument("-bm", "--base_model")
 
     # 引数を解析
     args = parser.parse_args()
@@ -223,11 +229,11 @@ def arg_parse(params):
     if args.retry: params["retry"] = strtobool(args.retry)
     if args.epochs: params["epochs"] = int(args.epochs)
     if args.initial_epoch: params["initial_epoch"] = int(args.initial_epoch)
-    if args.leranig_layerid: params["leranig_layerid"] = int(args.leranig_layerid)
+    if args.learnig_layer_id: params["learnig_layer_id"] = int(args.learnig_layer_id)
     if args.remove_after_train: params["remove_after_train"]["enable"] = strtobool(args.remove_after_train)
     if args.loss: params["loss"] = str(args.loss)
     if args.reuse: params["reuse"] = strtobool(args.reuse)
-
+    if args.base_model: params["base_model"] = str(args.base_model)
 
     # lossの処理
     if "local." == params["loss"][:6]:
@@ -256,6 +262,15 @@ def arg_parse(params):
         # カスタムオブジェクトとしても登録しておく
         params["custom_objects"][func_name] = loss_function
 
+    # ベースモデルの設定
+    if params["base_model"] == "VGG16":
+        params["base_model"] = VGG16
+    elif params["base_model"] == "ResNet50":
+        params["base_model"] = ResNet50
+    elif params["base_model"] == "MobileNetV2":
+        params["base_model"] = MobileNetV2
+
+
     return params
 
 
@@ -278,7 +293,7 @@ def set_default_setting():
     params["lr"] = 0.001               # 学習係数
     params["validation_th"] = 0.5      # 検証データに対する識別精度検証に使う尤度の閾値
     params["cp_period"] = 5            # 学習途中にモデルを保存する周期。5なら5 epochごとに保存する。
-    params["leranig_layerid"] = 16     # このレイヤー以降の結合係数を更新する。初回の学習は大きく、２回目は6が推奨。
+    params["learnig_layer_id"] = 16     # このレイヤー以降の結合係数を更新する。初回の学習は大きく、２回目は6が推奨。
     params["loss"] = "binary_crossentropy"  # 損失関数
     params["datagen_params"] = {}           # image data generatorへの指示パラメータ
     params["mixup_ignores"] = ["silence"]   # mixupで無視するクラス名
@@ -288,6 +303,8 @@ def set_default_setting():
     params["onnx_output"] = True       # onnx形式でのモデル保存を実行する場合、True
     params["tensorflowjs_output"] = False       # tensorflowjs形式でのモデル保存を実行する場合、True. ライブラリのバージョンでコンフリクトの恐れあり。
     params["remove_after_train"] = {"enable":False, "pattern":""}    # 学習後にファイルを削除する際に使用する
+    params["base_model"] = "VGG16"     # ベースモデル
+    params["check_validation"] = False # 検証データに対する予測とその結果の保存を行うかどうか（プロジェクト初期には有効）
     
     return params
 
@@ -348,6 +365,15 @@ def read_setting(fname):
         # カスタムオブジェクトとしても登録しておく
         param["custom_objects"][func_name] = loss_function
 
+
+    # ベースモデルの設定
+    if param["base_model"] == "VGG16":
+        param["base_model"] = VGG16
+    elif param["base_model"] == "ResNet50":
+        param["base_model"] = ResNet50
+    elif param["base_model"] == "MobileNetV2":
+        param["base_model"] = MobileNetV2
+
     return param
 
 
@@ -356,6 +382,7 @@ def read_setting(fname):
 
 def main():
     start = time.time()
+    now_ = dt.now().strftime('%Y%m%d%H%M')
 
     # 設定を読み込み
     setting = read_setting("train_setting.yaml")
@@ -405,7 +432,8 @@ def main():
             # 最初から学習を始める場合は、モデルを再構築
             model = build_model_local2(input_shape=x_train.shape[1:], 
                                        output_dim=y_train.shape[1], 
-                                       data_format=setting["data_format"])   # モデルの作成
+                                       data_format=setting["data_format"], 
+                                       base_model_=setting["base_model"])   # モデルの作成
 
         # ラベル名の辞書は予測処理での利用に備えてコピーしておく
         if not setting["retry"]:
@@ -443,7 +471,8 @@ def main():
             # モデルの新規作成
             model = build_model_local2(input_shape=x_train.shape[1:], 
                                       output_dim=output_dim, 
-                                      data_format=data_format)   # モデルの作成
+                                      data_format=data_format, 
+                                      base_model_=setting["base_model"])   # モデルの作成
     
 
     # 諸々を確認のために表示
@@ -455,18 +484,27 @@ def main():
     print2("layer size: ", len(model.layers))
 
 
-
     # モデルの調整（最適化器や、学習係数や、結合係数の調整など）
+    print(f"model layer size: {len(model.layers)}")
+    print("----layer trainable----")
     for i, layer in enumerate(model.layers):  # 結合係数を更新させるか、させないか調整
-        if i >= setting["leranig_layerid"]:
+        if i >= setting["learnig_layer_id"]:
             layer.trainable = True     # Trueで更新して、Falseで更新しない
         else:
             layer.trainable = False
+        print(f"layer {i}: {layer.trainable}")
 
     # re-compile
     model.compile(optimizer=SGD(learning_rate=setting["lr"], momentum=0.9),    # コンパイル
             loss=setting["loss"],   # 損失関数
             metrics=['accuracy'])
+    
+
+    # あとで状況を参照できるように、もろもろの保存
+    with open(os.path.join(save_dir, f"model_conditions_{now_}.txt"), "w", encoding="utf-8-sig") as fw:
+        fw.write(f"layer size: {len(model.layers)}\n\n")
+        fw.write("model summary: \n")
+        model.summary(print_fn=lambda x: fw.write(x + "\n"))
 
 
 
@@ -495,8 +533,7 @@ def main():
 
 
     # 設定の保存（後でパラメータを追えるように）
-    now_ = dt.now().strftime('%Y%m%d%H%M')
-    fname = os.path.join(save_dir, "train_setting_{}.yaml".format(now_))
+    fname = os.path.join(save_dir, f"train_setting_{now_}.yaml")
     with open(fname, 'w', encoding="utf-8-sig") as fw:
         yaml.dump(setting, fw, encoding='utf8', allow_unicode=True)
 
@@ -547,6 +584,8 @@ def main():
     save_history(os.path.join(report_path, "history.csv"), history, mode="a")
 
     # onnx形式での保存 (https://qiita.com/studio_haneya/items/be9bc7c56af44b7c1e0a)
+    ## pip install onnxruntime
+    ## pip install git+https://github.com/onnx/tensorflow-onnx         version 1.16.2にはバグがあるので注意
     if setting["onnx_output"]:
         import tf2onnx, onnx
         model_path = os.path.join(save_dir, "model.onnx")
@@ -565,15 +604,16 @@ def main():
 
 
     # 学習成果のチェックとして、検証データに対して分割表を作成し、正解・不正解のリストをもらう
-    checked_list = check_validation(0.15, model, x_test, y_test, label_dict, 
-                                    batch_size=30, 
-                                    mode="multi_label", 
-                                    save_dir=report_path)
+    if setting["check_validation"]:
+        checked_list = check_validation(0.15, model, x_test, y_test, label_dict, 
+                                        batch_size=30, 
+                                        mode="multi_label", 
+                                        save_dir=report_path)
 
-    # validationに使われたファイルに対する識別結果を保存
-    with open(os.path.join(report_path, "test_result.csv"), "w") as fw:
-        for file_name, result in zip(test_file_names, checked_list):
-            fw.write("{},{}\n".format(file_name, result))
+        # validationに使われたファイルに対する識別結果を保存
+        with open(os.path.join(report_path, "check_validation_result.csv"), "w") as fw:
+            for file_name, result in zip(test_file_names, checked_list):
+                fw.write("{},{}\n".format(file_name, result))
 
 
 

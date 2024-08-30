@@ -18,7 +18,12 @@ lr: 0.001               # 学習係数
 validation_th: 0.5      # 検証データに対する識別精度検証に使う尤度の閾値
 cp_period: 5            # 学習途中にモデルを保存する周期。5なら5 epochごとに保存する。
 leranig_layerid: 16     # このレイヤー以降の結合係数を更新する。初回の学習は大きく、２回目は6が推奨。
+onnx_output: False       # onnx形式でのモデル保存を実行する場合、True
+base_model: "VGG16"     # VGG16, ResNet50, MobileNetV2
 
+remove_after_train:     # 学習後にファイルを削除する設定
+   enable: False
+   pattern: "*.npy"
 
 # Image Data Generatorのためのパラメータ
 datagen_params:
