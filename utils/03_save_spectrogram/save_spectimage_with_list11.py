@@ -19,6 +19,7 @@
 #                    音源ファイルの親フォルダ毎にフォルダを分ける機能を追加（音源名が同じでフォルダで区別されている場合にわかりやすい）
 #                    ファイルのID一覧も保存するようにした。
 #  2024-03-05 ver.11 sound_imageの依存バージョンを9から10に変更した。
+#  2024-07-29        コメントに対応したread_listと、最近の仕様に合致したfusionをfusion_timelists.txtより移植した。普段の挙動は変わらないと思う。
 # created: 2019-08-30
 # license: 
 #  Please contact us for commercial use.
@@ -32,29 +33,49 @@ import sound_image10 as si
 
 
 
-def read_list(fname, ignore_size=None):
+
+# fusion_timelists.txtより移植
+def read_list(fname, compare_depth=-1, ignore_size=None):
     """ 音源と時間区間のリストを読み込む
     fname: str, 読み込むファイル名
+    compare_depth: int, パスを比較する深度。パスを比較する際に使用する。0だとファイル名のみで比較し、-1だとパス全体で比較する。
+                        音源を読み込んで加工するなど、比較が不要の場合は無視してよい。
+    ignore_size: int, 読み込まれた区間数がこの数より小さい場合、空の辞書を返す。
     """
     ans = {}
     count = 0
+    path_change = lambda x: x.replace("\\", "/")   # 円マーク（windowsでは円マーク）を/に書き換えるラムダ関数
+
     with open(fname, "r", encoding="utf-8-sig") as fr:
         lines = fr.readlines()  # 全行読み込み
         for line in lines:
             line = line.rstrip()  # 改行コード削除
+            if "#" in line:       # コメント文への対応
+                line = line[:line.find("#")]
+                line = line.rstrip()  # 空白削除
             if len(line) == 0:    # 空行を避ける
                 continue
+
             field = line.split(",")
             path = field[0]       # ファイルのパスを取得
-            times = field[1:]     # 時刻のリストを格納
-            if len(times) < 2:    # 時刻が入っていない行は避ける
-                continue
+
+            # パスの区切り文字を統一
+            path = path_change(path)
 
             # パスに余計な文字があれば排除
             if '"' in path:
                 path = path.replace('"', "")
             if "'" in path:
                 path = path.replace("'", "")
+
+
+            # パスの加工（ファイル名だけとか、1つ上の親フォルダまでとかで加工）
+            if compare_depth >= 0:
+                path = os.path.join(*re.split(r"[\\|/]", path)[-1 - compare_depth:])
+
+            times = field[1:]     # 時刻のリストを格納
+            if len(times) < 2:    # 時刻が入っていない行は避ける
+                continue
 
             # 時刻のリストを、(読み出し開始時刻, 時間幅)によるタプルのリストに加工
             time_list = []
@@ -65,22 +86,22 @@ def read_list(fname, ignore_size=None):
                 width = float(times[i + 1])
                 time_list.append((start, width))
 
-            count += len(time_list)
-
-            print(path)
-            print(time_list)
+            #print(path)
+            #print(time_list)
 
             ans[path] = time_list  # 辞書として保存
-
-
-    # 規定サイズ以下だったらからの辞書を返す
+            count += len(time_list)
+    
+    # 規定サイズ以下だったら空の辞書を返す
     if ignore_size is not None and ignore_size >= count:
         return {}
     else:
         return ans
+
+
             
 
-# create_human_voice_list4.pyより移植
+# fusion_timelists.pyより移植
 def fusion(time_list, th=1.2):
     """ 時間的に接近している検出区間を統合したものを返す
     time_list:  list<tuple<float, float>>, 開始時刻と終了時刻をペアにしたタプルを多数格納したリスト
@@ -91,20 +112,22 @@ def fusion(time_list, th=1.2):
 
     # 近いものを結合した新しいリストを作成
     ans = []
-    s1, e1 = time_list[0]
+    s1, w1 = time_list[0]
+    e1 = s1 + w1
     for i in range(1, len(time_list)):  # 要素数が2以上の時に実行される
-        s2, e2 = time_list[i]
+        s2, w2 = time_list[i]
+        e2 = s2 + w2
         if s2 - e1 < th:       # 時間的に接近していれば、くっつける
             e1 = e2
         else:
-            ans.append((s1, e1))   # 十分に時間的に分離しているとみなして、追加
+            ans.append((s1, e1 - s1))   # 十分に時間的に分離しているとみなして、追加
             s1, e1 = s2, e2
 
         if i == len(time_list) - 1:   # 最後の要素だったら追加
-            ans.append((s1, e1))
+            ans.append((s1, e1 - s1))
 
     if len(time_list) == 1:   # 要素数が1の時は上のfor文は実行されないので、要素をここで追加
-        ans = [(s1, e1)]
+        ans = [(s1, e1 - s1)]
 
     return ans
 
@@ -156,9 +179,7 @@ def save_spectrogram(time_dict, mask_dict, params):
 
         th = params["fusion"]
         if th > 0:
-            tl = [(s, s + w)  for s, w in time_list]
-            tl2 = fusion(tl, th)
-            time_list = [(s, e - s)  for s, e in tl2]
+            time_list = fusion(time_list, th)
 
         # 空のリストチェック
         if len(time_list) == 0:
@@ -205,7 +226,7 @@ def main():
     time_dicts = {}
     for list_name in setting["list_names"]:
         # 設定ファイルを使った処理
-        list_ = read_list(list_name, setting["ignore_size"])
+        list_ = read_list(list_name, ignore_size=setting["ignore_size"])
         if len(list_) == 0:
             continue
             

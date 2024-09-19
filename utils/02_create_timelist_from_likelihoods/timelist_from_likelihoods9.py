@@ -13,10 +13,11 @@
 #   2024-04-18 ver.8  尤度のファイル指定にglobを使ったパターンを指定できるように変更
 #   2024-07-10        関数の位置を変更
 #   2024-07-14        予測結果に含まれないクラスを設定ファイルにて指定していた場合でもエラーでとまらない様にした。
+#   2024-09-06        指定された尤度の範囲の件数や、実際の保存した件数もログとして残すようにした。また、抽出部分のif文の評価式を修正した。
 # author: Katsuhiro Morishita
 # created: 2020-04-27
 # license: MIT. If you use this program for your study, you should write Acknowledgement in your paper.
-import glob
+import os, glob
 import pandas as pd
 import numpy as np
 
@@ -114,71 +115,91 @@ def create_timelist(setting_file):
     likelifood_path = sorted(glob.glob(setting["likelihood_file"]))[0]
     df = read_likelihoods(likelifood_path)   # 予測結果を読み込み
     
-    # 検出結果を取得する
-    for tag in setting["tag"]:
+    if "all" in setting["tag"]:
+        setting["tag"] = list(df.columns)[3:]
 
-        if tag not in df.columns:
-            print("#" * 80)
-            print("#" * 80)
-            print(f"Tag: {tag} is not exists in DataFrame. So, check your setting file.")
-            continue
+    setting_name, setting_ext = os.path.splitext(os.path.basename(setting_file))
+    with open(f"ratio_{setting_name}.csv", "w", encoding="utf-8-sig") as fw_ratio:
+        fw_ratio.write(f'tag,th1,th2,count,setting["max"],r,under,real_saved_amount\n')
+    
+        # 検出結果を取得する
+        for tag in setting["tag"]:
 
-        for th_sets in setting["th"]:
-            th1, th2 = th_sets
-            if not (th1 >= 0 and th2 >= 0 and th1 < th2):
-                print(f"th_sets is wrong. {th_sets}")
+            if tag not in df.columns:
+                print("#" * 80)
+                print("#" * 80)
+                print(f"Tag: {tag} is not exists in DataFrame. So, check your setting file.")
                 continue
-            pre_result, count = to_binary(df, tag, th_sets, setting["positive"])
-            
-            # 結果の保存
-            if count > 0:
-                # 保存割合の計算
-                r = setting["max"] / count
+
+            for th_sets in setting["th"]:
+                th1, th2 = th_sets
+                if not (th1 >= 0 and th2 >= 0 and th1 < th2):
+                    print(f"th_sets is wrong. {th_sets}")
+                    continue
+                pre_result, count = to_binary(df, tag, th_sets, setting["positive"])
+                
+                # 結果の保存
+                r = float("nan")
                 under = ""
-                if r < 1:
-                    under = "_limited"
-                print(f"r={r}, count={count}.")
+                count_ = 0
 
-                # 冒頭のみ保存する枚数
-                h = setting["head_save_file"]
+                if count > 0:
+                    # 保存割合の計算
+                    r = setting["max"] / count
+                    
+                    if r < 1:
+                        under = "_limited"
+                    print(f"r={r}, count={count}.")
+ 
+                    # 冒頭のみ保存する枚数
+                    h = setting["head_save_file"]
 
 
-                with open(f"timelist_likelihoods_result_{tag}_th{th1}to{th2}{under}.txt", "w", encoding="utf-8-sig") as fw:
-                    files = sorted(pre_result.keys())
-                    for fpath in files:
-                        time_list = pre_result[fpath]
-
+                    with open(f"timelist_likelihoods_result_{tag}_th{th1}to{th2}{under}.txt", "w", encoding="utf-8-sig") as fw:
+                        files = sorted(pre_result.keys())
                         
-                        m = setting["min_per_file"]
-                        
-                        time_list_ = []
+                        for fpath in files:
+                            time_list = pre_result[fpath]
 
-                        # 冒頭で必要な分を取得
-                        if h > 0:
-                            time_list_ = time_list[:h]  # 実際にはh個も取れないかも
-                            time_list = time_list[h:]
-                            h -= len(time_list_)
+                            
+                            m = setting["min_per_file"]
+                            
+                            time_list_ = []
 
-                        # 多すぎる場合は減らす
-                        if m > 0 and len(time_list) > m and r < 1:
-                            r_ = ((len(time_list) - m) * r + m) / len(time_list)   # 実質的に残す割合
-                            x = np.random.rand(len(time_list))      # 乱数を作って
-                            time_list = np.array(time_list)[x < r_]  # 必要数を選択
+                            # 冒頭で必要な分を取得
+                            if h > 0:
+                                time_list_ = time_list[:h]  # 実際にはh個も取れないかも
+                                time_list = time_list[h:]
+                                h -= len(time_list_)
 
-                        time_list_ += list(time_list)
-                        print(f"r2={len(time_list_) / count}.")
-                        
-                        if len(time_list_) == 0:  # 中身が0個なら次のループ
-                            continue
+                            # 多すぎる場合は減らす
+                            if m >= 0 and len(time_list) > m and r < 1:
+                                r_ = ((len(time_list) - m) * r + m) / len(time_list)   # 実質的に残す割合
+                                x = np.random.rand(len(time_list))      # 乱数を作って
+                                time_list = np.array(time_list)[x < r_]  # 必要数を選択
 
-                        th = setting["fusion_th"]
-                        if th is not None:      # 結合
-                            time_list_se = [(s, s + w) for s, w in time_list_]   # 区間の開始時刻と幅から開始時刻と終了時刻のペアを作る
-                            time_list_se = fusion(time_list_se, th)
-                            time_list_ = [(s, e-s) for s, e in time_list_se]
-                        time_list = ["{},{}".format(s, w) for s, w in time_list_]
-                        time_list = ",".join(time_list)
-                        fw.write("{},{}\n".format(fpath, time_list))
+                            time_list_ += list(time_list)
+                            print(f"r2={len(time_list_) / count}.")
+                            
+                            count_ += len(time_list_)
+                            if len(time_list_) == 0:  # 中身が0個なら次のループ
+                                continue
+
+                            th = setting["fusion_th"]
+                            if th is not None:      # 結合
+                                time_list_se = [(s, s + w) for s, w in time_list_]   # 区間の開始時刻と幅から開始時刻と終了時刻のペアを作る
+                                time_list_se = fusion(time_list_se, th)
+                                time_list_ = [(s, e-s) for s, e in time_list_se]
+                            time_list = ["{},{}".format(s, w) for s, w in time_list_]
+                            time_list = ",".join(time_list)
+
+
+                            fw.write("{},{}\n".format(fpath, time_list))
+
+
+                # 状況を保存
+                fw_ratio.write(f'{tag},{th1},{th2},{count},{setting["max"]},{r},{under},{count_}\n')
+
 
 
 

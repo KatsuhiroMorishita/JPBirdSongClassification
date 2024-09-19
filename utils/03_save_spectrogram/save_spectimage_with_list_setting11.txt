@@ -1,4 +1,4 @@
-list_names, glob.glob("../02_create_timelist_from_likelifoods/timelist_likelihoods_result_*.txt")   # 設定ファイル名（文字列なので""か''でくくること）
+list_names, glob.glob("../02_create_timelist_from_likelihoods/timelist_likelihoods_result_*.txt")   # 設定ファイル名（文字列なので""か''でくくること）
 term, -1         # -1だと区間全体でスペクトログラム画像を作るが、正の数を渡すとその時間幅[s]で画像を作る
 shift_rate, 1    # 作成するスペクトログラムをずらす量。1.0だと重なりなく作る。0.5だと半分重ねる。0.25だと4分の3重ねる。
 hop, 0.0251      # 作る画像の時間分解能[s]
@@ -13,7 +13,7 @@ raw, True        # スペクトログラムに生の音声の振幅情報を埋�
 #emphasize_band, [2000, 3000, 0.3]  # 強調する帯域
 #cut_band, [(0, 500, "upper"), (16000, 22000, "zero")]      # カットする帯域
 #mask_fname, "cd_human_timelist_202010.txt"    # 音源毎に特定の区間を無視する場合は、無視する区間を指定できる（CD音源の人の声部分へのマスクで利用した）
-#path_replace, [r"\\10.105.3.46\Public\morishita_lab_nitk\野鳥の鳴き声による識別\code\音源ファイルからスペクトログラム保存。区間リスト利用可", r"C:\Users\morishita\Desktop\20180906_okinawa"]      # パスを書き換える場合に利用する。区間リストを作成後に音源の保存場所が変更された場合に利用する。
+#path_replace, [r"\\10.105.3.46\Public\morishita_lab_nitk\野鳥の鳴き声による識別\code\音源ファイルからスペクトログラム保存。区間リスト利用可", r"C:\Users\morishita\Desktop\20180906_okinawa"]      # [a, b] パスの文字列の一部をa to b に書き換える場合に利用する。区間リストを作成後に音源の保存場所が変更された場合に利用する。
 
 fusion, 0    # 区間リストの区間を結合してからスペクトログラム画像を作成する場合は、0より大きい値を指定すること。
 
