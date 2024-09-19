@@ -60,6 +60,7 @@
 #                   テストに使った音源には極端に大きいものもあったので、CPUのみの並列処理時間は実際にはもう少し早いと思う。
 #                   結論としては、GPUが使えるなら並列処理にしないほうが速い。これ以上の速度が必要なら、計算機を複数使用したほうがいい。
 #                   １台のマシンでGPUが１つしかないなら、プロセスは分割しないほうがいい。
+#  2024-08-20       音源の読み込みに失敗した場合にエラーではなくレポートを出力するように変更した。
 # author: Katsuhiro Morishita
 # created: 2019-10-29
 import sys, os, re, glob, copy, time, pickle, pprint, argparse, traceback, ast, time, random
@@ -713,6 +714,11 @@ def predict_sound(fname, setting, discriminators):
     wav, sr, _ = si.load_sound(fname, setting)
     #print("wav len and sampling rate: ", len(wav), sr)   # for debug
 
+    # 読み込みに失敗した場合の処理
+    if wav is None:
+        msg = f"wav data of '{fname}' is None."
+        print(msg)
+        return msg
 
     # 少しずつ切り出して、画像化して識別
     i, i_max = 0, int(len(wav) / sr / sw)     # 処理番号とその最大値（以下ではiが最大値に達してはならない）
@@ -783,6 +789,9 @@ def predict_sound(fname, setting, discriminators):
 
     elapsed_time = time.perf_counter() - start                 # 処理時間計測用  （不要ならコメントアウト）
     print("elapsed_time:{0}".format(elapsed_time) + "[sec]")   # 処理時間計測用  （不要ならコメントアウト）
+
+
+    return ""
 
 
 
@@ -873,7 +882,12 @@ def predict_sub(fnames, setting, conn1=None, conn2=None, id_=0):
                     print(f">>>{i + 1}/{len(fnames)}, pass:{int(tn - ts)} sec., last:{last_time}.")
 
                 try:             # たまにエラーが発生するので、その対応
-                    predict_sound(fname, setting, discriminators)  # 予測の実行
+                    res = predict_sound(fname, setting, discriminators)  # 予測の実行
+                    if res != "":
+                        with open(f"report_predict_ID{id_}.log", "a", encoding="utf-8-sig") as fw:
+                            fw.write("### {} ###\n".format(str(dt.now())))
+                            fw.write(f"{fname}\n")
+                            fw.write(f"{res}\n")
                 except Exception as e:
                     print("### error ###")
                     # エラー状況をファイルに残す
