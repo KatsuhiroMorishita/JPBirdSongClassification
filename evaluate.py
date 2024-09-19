@@ -25,6 +25,7 @@
 #   2024-08-06        マージンの処理を廃止
 #                     comp2で、区間の比較ロジックを修正した。また、和集合を求めるように変更した。
 #                     正解区間と予測区間が一部でも被っていたら良しとみなす場合のFalse Negativeを求めるロジックのバグも取れたと思う。
+#  2024-09-19         runsフォルダが無い場合に作るように変更
 # author: Katsuhiro Morishita
 # created: 2020-04-27
 # license: MIT. If you use this program for your study, you should write Acknowledgement in your paper.
@@ -736,6 +737,9 @@ def main():
     # 引数のチェック
     setting = arg_parse(setting)
     print2("\n\n< setting >", setting)
+
+    # 保存先の親フォルダを作成
+    os.makedirs("runs", exist_ok=True)  # 保存先のフォルダを作成
 
     # 保存先のフォルダを作る
     save_root_dir = next_dirpath("evaluate")

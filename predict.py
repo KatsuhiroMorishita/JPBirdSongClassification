@@ -61,6 +61,7 @@
 #                   結論としては、GPUが使えるなら並列処理にしないほうが速い。これ以上の速度が必要なら、計算機を複数使用したほうがいい。
 #                   １台のマシンでGPUが１つしかないなら、プロセスは分割しないほうがいい。
 #  2024-08-20       音源の読み込みに失敗した場合にエラーではなくレポートを出力するように変更した。
+#  2024-09-19       runsフォルダが無い場合に作るように変更
 # author: Katsuhiro Morishita
 # created: 2019-10-29
 import sys, os, re, glob, copy, time, pickle, pprint, argparse, traceback, ast, time, random
@@ -1232,7 +1233,9 @@ def main():
         os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
     
-    
+    # 保存先の親フォルダを作成
+    os.makedirs("runs", exist_ok=True)  # 保存先のフォルダを作成
+
     # 保存先のフォルダ名の準備
     save_dir = next_dirpath("predict")   # 結果の保存先
     if setting["tag"] != "":
