@@ -26,6 +26,7 @@
 #  2024-04-11 複数の条件での学習を試すために、初回の学習に使用した学習データやモデルを流用できる機能を追加した。
 #  2024-08-12 モデルの状況をテキストファイルに保存するように変更した。
 #  2024-08-20 気軽にベースモデルを切り替えられるように変更した。切り替えた際は学習係数に注意すること。
+#  2024-09-19 保存フォルダにタグを付けられるようにした。設定を変えながら学習を繰り返す場合に便利になると思う。ついでに重複コードを整理した。
 # author: Katsuhiro MORISHITA　森下功啓
 # created: 2021-10-18
 import sys, os, re, glob, copy, time, pickle, pprint, argparse, ast, shutil
@@ -187,6 +188,53 @@ def build_model_local2(input_shape, output_dim, data_format, loss='binary_crosse
 
 
 
+
+
+
+def postprocess_setting(param):
+    """ 設定を書き込んだ辞書を確認し、lossの処理とベースモデルの処理を行う
+    設定ファイルと引数を読み込んだ後に実行すること。
+    """
+
+    # lossの処理
+    if "local." == param["loss"][:6]:
+        # "local.hogehoge_func,{a=10}"の様な文字列を想定
+        lossName_lossParam = param["loss"][6:]            # 先頭文字列を削る
+        func_name, loss_param_str = lossName_lossParam.split(",", 1)   # 分割
+        func_name = func_name.strip()
+        loss_param_str = loss_param_str.strip()
+        func_name = func_name[:30]                       # 関数名の文字数制限
+        loss_param = ast.literal_eval(loss_param_str)    # 辞書オブジェクトに変換
+
+        # 重みの処理
+        w = [1.0] * len(param["class_sets"])
+        if "weights" in loss_param:
+            weights = loss_param["weights"]   # 例："{"kuina": 1.5}"
+
+            labels = sorted(list(param["class_sets"]))
+            for label in weights:
+                w[labels.index(label)] = weights[label]
+        loss_param["weights"] = np.array(w)
+
+        loss_function = gen_custom_loss(func_name, loss_param)
+        param["loss"] = loss_function
+        #print("------------------------", func_name, param["loss"])
+
+        # カスタムオブジェクトとしても登録しておく
+        param["custom_objects"][func_name] = loss_function
+
+
+    # ベースモデルの設定
+    if param["base_model"] == "VGG16":
+        param["base_model"] = VGG16
+    elif param["base_model"] == "ResNet50":
+        param["base_model"] = ResNet50
+    elif param["base_model"] == "MobileNetV2":
+        param["base_model"] = MobileNetV2
+
+    return param
+
+
 # https://note.nkmk.me/python-bool-true-false-usage/#bool-bool
 def strtobool(val):
     """Convert a string representation of truth to true or false.
@@ -220,6 +268,7 @@ def arg_parse(params):
     parser.add_argument("--loss")
     parser.add_argument("--reuse")
     parser.add_argument("-bm", "--base_model")
+    parser.add_argument("-t", "--tag")
 
     # 引数を解析
     args = parser.parse_args()
@@ -234,42 +283,10 @@ def arg_parse(params):
     if args.loss: params["loss"] = str(args.loss)
     if args.reuse: params["reuse"] = strtobool(args.reuse)
     if args.base_model: params["base_model"] = str(args.base_model)
+    if args.tag: params["tag"] = str(args.tag)
 
-    # lossの処理
-    if "local." == params["loss"][:6]:
-        # "local.hogehoge_func,{a=10}"の様な文字列を想定
-        lossName_lossParam = params["loss"][6:]            # 先頭文字列を削る
-        func_name, loss_param_str = lossName_lossParam.split(",", 1)   # 分割
-        func_name = func_name.strip()
-        loss_param_str = loss_param_str.strip()
-        func_name = func_name[:30]                       # 関数名の文字数制限
-        loss_param = ast.literal_eval(loss_param_str)    # 辞書オブジェクトに変換
-
-        # 重みの処理
-        w = [1.0] * len(params["class_sets"])
-        if "weights" in loss_param:
-            weights = loss_param["weights"]   # 例："{"kuina": 1.5}"
-
-            labels = sorted(list(params["class_sets"]))
-            for label in weights:
-                w[labels.index(label)] = weights[label]
-        loss_param["weights"] = np.array(w)
-
-        loss_function = gen_custom_loss(func_name, loss_param)
-        params["loss"] = loss_function
-        #print("------------------------", func_name, params["loss"])
-
-        # カスタムオブジェクトとしても登録しておく
-        params["custom_objects"][func_name] = loss_function
-
-    # ベースモデルの設定
-    if params["base_model"] == "VGG16":
-        params["base_model"] = VGG16
-    elif params["base_model"] == "ResNet50":
-        params["base_model"] = ResNet50
-    elif params["base_model"] == "MobileNetV2":
-        params["base_model"] = MobileNetV2
-
+    # lossの処理とベースモデルの処理
+    params = postprocess_setting(params)
 
     return params
 
@@ -279,6 +296,7 @@ def set_default_setting():
     """ デフォルトの設定をセットして返す
     """
     params = {}
+    params["tag"] = ""                 # フォルダに付ける名前
     params["image_root"] = r"./data/images/flower_sample"   # 学習したい画像の入っているフォルダ（相対パス）
     params["image_shape_wh"] = (50, 50)           # 画像のサイズ。横と縦。
     params["data_format"] = "channels_last"       # チャンネル配置。確か、"channels_last"前提で書いちゃった部分がある。
@@ -337,45 +355,10 @@ def read_setting(fname):
     ## クラスの重複対応
     param["class_sets"] = set(param["class_list"])  # もし重複があっても排除
 
-
-    # lossの処理
-    if "local." == param["loss"][:6]:
-        # "local.hogehoge_func,{a=10}"の様な文字列を想定
-        lossName_lossParam = param["loss"][6:]            # 先頭文字列を削る
-        func_name, loss_param_str = lossName_lossParam.split(",", 1)   # 分割
-        func_name = func_name.strip()
-        loss_param_str = loss_param_str.strip()
-        func_name = func_name[:30]                       # 関数名の文字数制限
-        loss_param = ast.literal_eval(loss_param_str)    # 辞書オブジェクトに変換
-
-        # 重みの処理
-        w = [1.0] * len(param["class_sets"])
-        if "weights" in loss_param:
-            weights = loss_param["weights"]   # 例："{"kuina": 1.5}"
-
-            labels = sorted(list(param["class_sets"]))
-            for label in weights:
-                w[labels.index(label)] = weights[label]
-        loss_param["weights"] = np.array(w)
-
-        loss_function = gen_custom_loss(func_name, loss_param)
-        param["loss"] = loss_function
-        #print("------------------------", func_name, param["loss"])
-
-        # カスタムオブジェクトとしても登録しておく
-        param["custom_objects"][func_name] = loss_function
-
-
-    # ベースモデルの設定
-    if param["base_model"] == "VGG16":
-        param["base_model"] = VGG16
-    elif param["base_model"] == "ResNet50":
-        param["base_model"] = ResNet50
-    elif param["base_model"] == "MobileNetV2":
-        param["base_model"] = MobileNetV2
+    # lossの処理とベースモデルの処理
+    param = postprocess_setting(param)
 
     return param
-
 
 
 
@@ -387,7 +370,7 @@ def main():
     # 設定を読み込み
     setting = read_setting("train_setting.yaml")
 
-    # 引数のチェック
+    # 引数の処理と中身の確認
     setting = arg_parse(setting)
     print2("\n\n< setting >", setting)
 
@@ -404,6 +387,12 @@ def main():
     # 保存先の親フォルダを作成
     os.makedirs("runs", exist_ok=True)  # 保存先のフォルダを作成
 
+    # 保存するフォルダに付けるタグ（メモ的なもの）
+    savedir_tag = ""
+    if setting["tag"] != "":
+        savedir_tag = f"_{setting['tag']}"
+
+
 
     # 教師データの読み込みと、モデルの構築
     ## 学習を再開させる場合
@@ -415,11 +404,14 @@ def main():
     
     # 学習用のデータを流用する場合
     elif setting["reuse"]:
+        # 保存先のフォルダを作成
         save_dir = next_dirpath("train")      # 結果の保存先
+        save_dir += savedir_tag
         if setting["retry"]:
             save_dir = last_dirpath("train")   # （前回の、そして今回の）結果の保存先
         os.makedirs(save_dir, exist_ok=True)  # 保存先のフォルダを作成
         
+        # numpy形式で保存済みの教師データとラベルデータを読み込む
         load_dir = first_dirpath("train")      # 保存済みの学習データ等が保存されているフォルダ
         x_train, y_train, x_test, y_test, weights_dict, label_dict, model = reload(load_dir=load_dir, custom_objects=setting["custom_objects"], model_format=setting["model_format"])
         test_file_names = restore(['test_names.pickle'], load_dir=load_dir)[0]   # 1つしか無いがlistで返ってくるので[0]で取り出す
@@ -441,9 +433,12 @@ def main():
 
     # 教師データの読み込みと、モデルの構築。必要なら、callbackで保存していた結合係数を読み込む
     else:
-        last_dir = last_dirpath("train")      # 前回の結果の保存先
+        # 保存先のフォルダを作成
         save_dir = next_dirpath("train")      # 今回の結果の保存先
+        save_dir += savedir_tag
         os.makedirs(save_dir, exist_ok=True)  # 保存先のフォルダを作成
+        
+        # 教師データとなる画像データの格納フォルダを探す
         data_format = setting["data_format"]
         dir_names_dict = ip.search_image_dir(setting["image_root"],  # 画像フォルダのクラス名とパスの一覧を辞書で取得
                                              setting["class_sets"], 
@@ -456,16 +451,19 @@ def main():
                  "mode":"RGB", 
                  "resize_filter": Image.NEAREST, 
                  "preprocess_func": ip.preprocessing2,
-                 }       
+                 }   
+
+        # 教師データを画像から読み込み、numpy形式に変更    
         x_train, x_test, weights_dict, label_dict, y_train, y_test, output_dim, test_file_names = \
                                        ip.load_save_images(ip.read_images3, 
                                                            param, 
                                                            validation_rate=setting["validation_rate"], 
                                                            save_dir=save_dir)
-        
+        # モデル構築
         if "--load_model" in sys.argv:
             # 前回の学習結果から、モデルだけを読み込む（保存されたモデルに対し、クラスが変化（増えたり減ったり入れ替わったり）なければ動く）
             # 機会はあまりないけど、追加で学習を進める場合に利用する
+            last_dir = last_dirpath("train")      # 前回の結果の保存先
             model = reload(load_names=[], with_model=True, load_dir=last_dir, custom_objects=setting["custom_objects"], model_format=setting["model_format"])[0]
         else:
             # モデルの新規作成
