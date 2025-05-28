@@ -1,0 +1,1 @@
+../../data/sounds/kumamoto_ashikita_soshicho_uguisu.wav,0,10

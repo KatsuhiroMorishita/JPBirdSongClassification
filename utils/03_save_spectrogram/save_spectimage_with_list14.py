@@ -20,6 +20,10 @@
 #                    ファイルのID一覧も保存するようにした。
 #  2024-03-05 ver.11 sound_imageの依存バージョンを9から10に変更した。
 #  2024-07-29        コメントに対応したread_listと、最近の仕様に合致したfusionをfusion_timelists.txtより移植した。普段の挙動は変わらないと思う。
+#  2025-02-03 ver.12 作成した画像の保存先のルートフォルダを指定できるように変更した。
+#  2025-03-21 ver.13 sound_imageの依存バージョンを10から11に変更した。
+#  2025-04-08 ver.14 sound_imageの依存バージョンを11から12に変更した。
+#  2025-04-11        sound_imageで対応する保存形式を増やしたので、そのあおりで設定ファイルの形式がyamlになった。
 # created: 2019-08-30
 # license: 
 #  Please contact us for commercial use.
@@ -29,7 +33,7 @@
 import re, os
 from datetime import datetime as dt
 
-import sound_image10 as si
+import sound_image12 as si
 
 
 
@@ -48,12 +52,15 @@ def read_list(fname, compare_depth=-1, ignore_size=None):
 
     with open(fname, "r", encoding="utf-8-sig") as fr:
         lines = fr.readlines()  # 全行読み込み
+        #print(lines)   # debug
+
         for line in lines:
             line = line.rstrip()  # 改行コード削除
             if "#" in line:       # コメント文への対応
                 line = line[:line.find("#")]
                 line = line.rstrip()  # 空白削除
             if len(line) == 0:    # 空行を避ける
+                #print("no text")   # debug
                 continue
 
             field = line.split(",")
@@ -94,6 +101,7 @@ def read_list(fname, compare_depth=-1, ignore_size=None):
     
     # 規定サイズ以下だったら空の辞書を返す
     if ignore_size is not None and ignore_size >= count:
+        print(f"The size of time field is less than ignroe_size. So skip this time list file. : {fname}")
         return {}
     else:
         return ans
@@ -205,6 +213,7 @@ def set_default_setting(params: dict):
     params["mask_margin"] = 0    # マスク処理をかける際に、前後の方向に少し余裕を見て消す場合は0以上を設定のこと。
     params["ignore_size"] = 0
     params["save_each_dir"] = False   # Trueだと、音源の親フォルダと同じ名前のフォルダを作成する
+    params["save_dir_root"] = ""  # 保存先のフォルダ ""だとカレントディレクトリとなる。
     return params
 
 
@@ -213,7 +222,7 @@ def main():
     # 設定の読み込み
     setting = si.set_default_setting()
     setting = set_default_setting(setting)
-    setting = si.read_setting("save_spectimage_with_list_setting11.txt", setting)
+    setting = si.read_setting("save_spectimage_with_list_setting14.yaml", setting)
     print(setting)
 
     # マスク情報（例えばCDにおける人の声）の読み込み
@@ -222,19 +231,27 @@ def main():
     if mask_fname != "":
         mask_dict = read_list(mask_fname)
 
+    # 保存先の作成　その1
+    root = setting["save_dir_root"]
+    if root != "":
+        os.makedirs(root, exist_ok=True) 
 
+    # 保存先の作成　その2
     time_dicts = {}
     for list_name in setting["list_names"]:
         # 設定ファイルを使った処理
+        print("** now list file name is", list_name)
         list_ = read_list(list_name, ignore_size=setting["ignore_size"])
         if len(list_) == 0:
+            print("The size of list is zero. so goto next list or finish creating dir.")
             continue
             
         time_dicts[list_name] = list_
         
         # 保存先の設定とフォルダの作成
         name, ext = os.path.splitext(os.path.basename(list_name))
-        save_dir = name.replace("timelist_", "")
+        save_dir_ = name.replace("timelist_", "")
+        save_dir = os.path.join(root, save_dir_)
         os.makedirs(save_dir, exist_ok=True)
 
 
@@ -281,7 +298,8 @@ def main():
             if file in time_dict:
                 # 保存先の設定とフォルダ名作成
                 name, ext = os.path.splitext(os.path.basename(list_name))
-                save_dir = name.replace("timelist_", "")
+                save_dir_ = name.replace("timelist_", "")
+                save_dir = os.path.join(root, save_dir_)
 
                 # 音源の親フォルダ毎にフォルダを分ける場合
                 if setting["save_each_dir"]:

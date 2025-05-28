@@ -2,6 +2,8 @@
 # purpose: 識別結果の尤度の表や、画像の一覧から、検出数の時系列グラフや、音源毎の時間別検出数、通算日と検出時刻の散布図を作製する。
 # history: 
 #   2024-07-08   今までのスクリプトを整理して作製開始
+#   2025-03-19   Python 3.13の警告に対応。状況に合わせてエラーを出すように変更した。
+#   2025-03-30   mutagenとcv2を使ってファイルの長さを取得し、タイムスタンプが記録終了時刻であっても対応できるものとした。
 # author: Katsuhiro Morishita
 # created: 2024-07-10
 # license: MIT. If you use this program for your study, you should write Acknowledgement in your paper.
@@ -22,6 +24,13 @@ import ephem
 import Levenshtein
 import librosa
 
+import cv2
+from mutagen.mp4 import MP4
+from mutagen.flac import FLAC 
+from mutagen.mp3 import MP3
+from mutagen.wave import WAVE
+from mutagen.asf import ASF
+
 
 
 # label_from_likelifoods.pyよりコピー
@@ -41,7 +50,7 @@ def read_images(setting):
     setting: dir, 諸々の設定が書き込まれた辞書
     """
     # 画像のパスを取得
-    image_files = glob.glob(os.path.join(setting["image_source"], "*.png"))
+    image_files = glob.glob(os.path.join(setting["image_source_dir"], "*.png"))
     image_files = sorted(image_files)
 
     if len(image_files) == 0:
@@ -92,6 +101,8 @@ def read_images(setting):
     if setting["audio_source"] != "":
         audio_files = glob.glob(setting["audio_source"])    # パターンに合致するものを検索
         print(f"{len(audio_files)} audio files were founded. ")
+        if len(audio_files) == 0 and setting["datetime_method"] == "timestamp": 
+            raise ValueError("Not found any audio files. Check param of 'audio_source' in statistics_setting.yaml.")
 
         if len(audio_files) > 0:
             am = audio_matcher(audio_files)
@@ -107,6 +118,8 @@ def read_images(setting):
 
                         if audio_path_abs in audio_length:
                             audio_length[audio_path_abs] = librosa.get_duration(filename=audio_path)  # 長さ[s]を取得
+    elif setting["datetime_method"] == "timestamp": 
+        raise ValueError("Set param of 'audio_source' in statistics_setting.yaml.")
 
 
     # 検出結果を格納する基本的な表を作製
@@ -196,11 +209,11 @@ def split_fname(path_image, ext):
     ext: str, 音源の拡張子。例：".mp3"
     """
     fname_image = os.path.basename(path_image)         # ファイル名取り出し
-    dummy, loc, name_and_times = re.split(r'_{2,4}', fname_image, 2)  # __で分割
+    dummy, loc, name_and_times = re.split(r'_{2,4}', fname_image, maxsplit=2)  # __で分割
 
     # ファイル名と時間区間の取得（ファイル名の中に__があっても対応）
     name_and_times_mirror = name_and_times[::-1]
-    time_mirror, name_mirror = re.split(r'_{2,4}', name_and_times_mirror, 1)
+    time_mirror, name_mirror = re.split(r'_{2,4}', name_and_times_mirror, maxsplit=1)
     name = name_mirror[::-1]
     times = time_mirror[::-1]                    # この時点では拡張子が含まれる
     time_pair, ext2 = os.path.splitext(times)    # 拡張子を分離
@@ -341,7 +354,7 @@ class audio_matcher:
 
         # キャッシュを確認し、あればそれを返す
         image_file_path_temp_mirror = image_file_path_temp[::-1]   # 文字列反転
-        time_mirror, name_mirror = re.split(r'_{2,4}', image_file_path_temp_mirror, 1)
+        time_mirror, name_mirror = re.split(r'_{2,4}', image_file_path_temp_mirror, maxsplit=1)
         key = name_mirror[::-1]
 
         if key in self.cache:
@@ -412,9 +425,47 @@ def to_binary(df, tags, th, positive=True, ignore=""):
 
 
 
-def get_datetime(fpath, method="normal"):
+def get_length(file_path):
+    """ メタ情報から音源や動画の長さを確認して返す
+    """
+    name, ext = os.path.splitext(file_path)
+    ext = ext[1:].lower()
+
+    length = 100 * 3600  # 48 hours
+    audio_info = None
+
+    if ext in ["mp3", "aac", "m4a", "flac", "wav", "wma"]:    # 音声データへの対応
+        if ext == "mp3":
+            audio_info = MP3(file_path).info
+        elif ext in ["aac", "m4a"]:
+            audio_info = MP4(file_path).info
+        elif ext == "flac":
+            audio_info = FLAC(file_path).info
+        elif ext == "wav":
+            audio_info = WAVE(file_path).info
+        elif ext == "wma":
+            audio_info = ASF(file_path).info
+
+        if audio_info is not None:
+            length = audio_info.length
+
+    else:     # 動画への対応
+        cap = cv2.VideoCapture(file_path)
+        if cap.isOpened():
+            length = cap.get(cv2.CAP_PROP_FRAME_COUNT) / cap.get(cv2.CAP_PROP_FPS)
+            
+
+    if length == 100 * 3600:
+        print(f"Warning: File length is unknown >> {file_path}")
+    return length
+
+
+
+
+def get_datetime(fpath, method="normal", timestamp_mode="start"):
     """ ファイル（の名前や保存時刻）から、日付情報を抽出する
     """
+    #print(fpath)  # debug
     t = dt(2000,1,1)
 
     if method == "normal":
@@ -434,6 +485,14 @@ def get_datetime(fpath, method="normal"):
         
     elif method == "timestamp":  # ファイルの更新日時（ICレコーダーの場合は大抵録音開始時刻）
         unix_time = os.path.getmtime(fpath)
+
+        if timestamp_mode != "start":   # "end"ならTrue
+            length = get_length(fpath)
+            if length < 48 * 3600:
+                unix_time -= length
+            else:
+                print(">>> Warning: can't get file length... @{fpath}")
+
         t = dt.fromtimestamp(unix_time)
 
     # デバッグ用に出力
@@ -741,11 +800,19 @@ def create_detected_calenders(setting):
     # 日時の列を作る
     print("--日時の列を作成中--")
     fnames = df1["fname"].values
-    times = [get_datetime(fpath, setting["datetime_method"]) for fpath in fnames]
+    times = [get_datetime(fpath, method=setting["datetime_method"], timestamp_mode=setting["timestamp_mode"]) for fpath in fnames]
     df1 = df1.copy()
-    df1["time"] = times
+    df1["recording_start_time"] = times
     df2 = df1.loc[~df1["s"].isna()]
-    df1.loc[~df1["s"].isna(), "time"] = df2["time"] + df2["s"].astype('timedelta64[s]')
+    df1.loc[~df1["s"].isna(), "time"] = df2["recording_start_time"] + df2["s"].astype('timedelta64[s]')
+    if setting["debug"]:
+        df1.to_excel(os.path.join(setting["save_dir"] , "df1.xlsx"), index=False)   # for debug
+
+        # 音源ファイルの録音開始時刻（推定）のみを保存
+        df_ = df1.copy()
+        df_ = df_.drop_duplicates(keep="first", subset="fname")
+        df_ = df_[["fname", "recording_start_time"]]
+        df_.to_excel(os.path.join(setting["save_dir"] , "df_audio.xlsx"), index=False)   # for debug
     
 
     # サブディレクトリの扱い
@@ -815,18 +882,20 @@ def set_default_setting():
     params["tag"] = ""         # 評価対象のタグ
     params["source"] = "likelihood_file"
     params["likelihood_file"] = "prediction_likelihoods*.csv"
-    params["image_source"] = "."
-    params["audio_source"] = ""    # 画像の作製に使われた音源の検索パターン。 /sample/*.mp2　など
+    params["image_source_dir"] = "."   # 画像が入っているフォルダのパス
+    params["audio_source"] = ""        # 画像の作製に使われた音源の検索パターン。 /sample/*.mp2　など
     params["path_replace"] = [["", ""]]
     params["th"] = 0.15
     params["basedir_separation"] = False
-    params["datetime_method"] = "SF"  # ファイルから日時を取り出す関数の選択。normal, SF, timestamp
+    params["datetime_method"] = "SF"     # ファイルから日時を取り出す関数の選択。normal, SF, timestamp
+    params["timestamp_mode"] = "start"   # タイムスタンプが録音開始時刻を刺しているなら"start"とすること。末尾なら"end"とする。
     params["graph_save"] = True
     params["save_dir"] = "."    # 保存先のフォルダ。　"."でカレントディレクトリを指す。
     params["min_limit"] = 200   # 検出数に対する閾値。これ以下だと保存されない。
     params["stat1"] = {"target": ["daily", "weekly", "monthly"]}
     params["stat2"] = {"available": True, "extend_times":3, "shrink_times":3, "time_step":1}
     params["stat3"] = {"available": True}
+    params["debug"] = False
     return params
 
 

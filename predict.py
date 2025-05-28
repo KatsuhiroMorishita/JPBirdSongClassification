@@ -62,12 +62,15 @@
 #                   １台のマシンでGPUが１つしかないなら、プロセスは分割しないほうがいい。
 #  2024-08-20       音源の読み込みに失敗した場合にエラーではなくレポートを出力するように変更した。
 #  2024-09-19       runsフォルダが無い場合に作るように変更
+#  2025-03-25       sound_image11に対応
+#  2025-05-04       sound_image12に対応
 # author: Katsuhiro Morishita
 # created: 2019-10-29
-import sys, os, re, glob, copy, time, pickle, pprint, argparse, traceback, ast, time, random
+import sys, os, re, glob, copy, time, pickle, pprint, argparse, traceback, ast, time, random, unicodedata, hashlib
 from multiprocessing import Process, Pipe
 from datetime import datetime as dt
 from datetime import timedelta as td
+
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -76,9 +79,8 @@ from PIL import Image
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 import yaml
-import unicodedata, hashlib
 
-import libs.sound_image10 as si
+import libs.sound_image12 as si
 
 
 
@@ -1083,17 +1085,20 @@ def set_default_setting():
     params["batch_size"] = 1       # バッチサイズ
     params["size"] = (32, 32, 1)   # 予測にかける画像のサイズ。最後の1はチャンネル。設定ファイルではlist型として記述すること。
     params["window_size"] = 5      # 音声の切り出し幅[s]
-    params["hop"] = 0.025          #: int, 時間分解能[s]
+    params["hop"] = 0.0251         #: float, 時間分解能[s]
     params["load_mode"] = "kaiser_fast",    #: str, librosa.load()でres_typeに代入する文字列。読み込み速度が変わる。kaiser_fastとkaiser_bestではkaiser_fastの方が速い。
     params["shift_rate"] = 1.0     # 音源のスライド量。0.5だと、半分重ねる。1だとw分ずらす。2だと2w分ずらす（処理量は半分）。
     params["imagegen_params"] = {  # スペクトログラムを作成する関数への指示パラメータ
-            "sr": 44100,           #: float, 音源を読み込む際のリサンプリング周波数[Hz]
+            "sr": 44100,           #: int, 音源を読み込む際のリサンプリング周波数[Hz]
             "fmax": 10000,         #: int, スペクトログラムの最高周波数[Hz]。fmax < sr / 2でないと、警告がでる。
-            "top_remove": 0,               #: int, 作成したスペクトログラムの上部（周波数の上端）から削除するピクセル数。フィルタの影響を小さくするため。
+            "top_remove": 0,       #: int, 作成したスペクトログラムの上部（周波数の上端）から削除するピクセル数。フィルタの影響を小さくするため。
             "n_mels": 128,         #: int, 周波数方向の分解能（画像の縦方向のピクセル数）
             "n_fft": 2048,         #: int, フーリエ変換に使うポイント数
             "raw": False,          # Trueだと音圧情報をスペクトログラムの一番上のセルに埋め込む
             "noise": 0.0,          # 音源の波形に加えるノイズの大きさ。波形の標準偏差が基準。
+            "cut_band": None,      # 帯域を指定して無音化する。指定例：[[0, 500, "upper"], [16000, 22000, "lower"]]
+            "bandpass_param": []   # 帯域通過フィルタのパラメータ。例：[200, 600, 2000, 5000] 意味は、200以下と5000Hz以上を阻止して、600-2000 Hzを通過させる、となる。設定次第で計算結果がNullとなるので注意。
+            "emphasize_band": None # 強調する帯域. # exmple: [2500, 4500, 0.1] 
             }
     params["th"] = 0.9             # 判定に用いる尤度
     params["preprocess_chain"] = [preprocessing]

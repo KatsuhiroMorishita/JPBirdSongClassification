@@ -3,13 +3,13 @@
 
 
 # 花のサンプル画像を予測する場合
-image_root: "./data/images/flower_sample"   # 学習したい画像の入っているフォルダ（相対パス）
+image_root: "./data/images/flower_sample"   # 学習したい画像の入っているフォルダ（相対パスでもOK）
 image_shape_wh: [50, 50]           # 画像のサイズ。横と縦。
 data_format:  "channels_last"       # チャンネル配置。確か、"channels_last"前提で書いちゃった部分がある。
 class_list:  ["white", "yellow"]    # クラス名の一覧
 ignore_list: ["ignore", "double"]  # ファイルのパスに含まれていたら無視する文字列のリスト。
 exchange_dict:  {}                  # クラス名を置換したい場合に辞書で指定。例：{"gray": "white"}
-model_format: ".hdf5"   # 保存するモデルの形式
+model_format: "SavedModel"   # 保存するモデルの形式. "SavedModel" or ".hdf5"
 epochs:  20              # 学習する回数（基本的には、全画像と同じ枚数の画像の学習を行うのを単位とする）
 batch_size:  10          # 1回の学習係数の修正に利用する画像数
 initial_epoch:  0        # 初期エポック数（学習を再開させる場合は0以外とする）
@@ -17,18 +17,22 @@ validation_rate:  0.2    # 画像が大量にあるなら0.05程度でも良い�
 lr: 0.001               # 学習係数
 validation_th: 0.5      # 検証データに対する識別精度検証に使う尤度の閾値
 cp_period: 5            # 学習途中にモデルを保存する周期。5なら5 epochごとに保存する。
-leranig_layerid: 16     # このレイヤー以降の結合係数を更新する。初回の学習は大きく、２回目は6が推奨。
-onnx_output: False       # onnx形式でのモデル保存を実行する場合、True
+leranig_layerid: 16     # このレイヤー以降の結合係数を更新する。VGG16の場合、初回の学習は大きく、２回目は6が推奨。
+loss: "binary_crossentropy"                       # 損失関数. 標準は"binary_crossentropy"。独自定義の関数でもよい。
+                                                  # その場合はmlcore*.py内のgen_custom_lossに関数を定義し、ここではlocal.～～と指定する。
+                                                  # 例："local.focal_loss,{'gamma':0.5, 'a':2}"　ここで、辞書{}は関数のパラメータ。
+onnx_output: True       # onnx形式でのモデル保存を実行する場合、True
 base_model: "VGG16"     # VGG16, ResNet50, MobileNetV2
 
 remove_after_train:     # 学習後にファイルを削除する設定
    enable: False
    pattern: "*.npy"
 
+
 # Image Data Generatorのためのパラメータ
 datagen_params:
    random_erasing: [0.2, [0.02, 0.25]]    # 確率、箱の大きさの範囲
-   mixup: [0.3, 3, null]         # 確率、合成する画像数、無視するラベル。nullはPython内ではNone扱いとなる。
+   mixup: [0.3, 3, null]         # 確率、合成する画像数、無視するラベル（無音などmixupしてもラベルに影響させない. nullで該当なしを意味する.）。nullはPython内ではNone扱いとなる。
    width_shift_range: 1.0                 # 横方向のシフト率
    height_shift_range: [0.05, True]       # 縦方向のシフト率、上端セルを無視するかどうか
    #shape: shape
@@ -39,3 +43,8 @@ datagen_params:
    freq_filter: [[0.97, 10, 0.05, "high_pass", 0.05, 0.2, 0], 
                  [0.15, 15, 0.05, "low_pass", 0.15, 0.2, 0]]   # 周波数フィルタのパラメータ。位置0-1、ピクセル幅、最小値0-1、種類、変動の大きさ、確率、無視する行のインデックス
    back_ground: [0.3, 0.3]    # 確率、背景強度
+   use_class: 1.0             # 1イテレーション（1回の学習）で学習に使うクラスの割合（識別対象のクラス数が多い場合に、1.0未満とすると初期の学習が進みやすくなる（最終精度は悪化しやすい））
+   balancing_refresh_iteration: null  # バランスを取るためのmap2を更新する学習回数の周期。use_classを1より小さい値にする場合は1を推奨する（クラス間の学習の偏りが減る）。nullだとmap2は1 epoch毎に更新される。
+   insert_gradient: False      # RGB画像であることを前提に、輝度勾配を埋め込む
+   insert_std: False           # 時間方向の音圧変化を周波数ごとに埋め込む
+   label_smoothing_e: 0.0     # ラベルスムージング（0.0005などを指定すると、過学習を防止する効果がある）

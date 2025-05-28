@@ -27,10 +27,12 @@
 #  2024-08-12 モデルの状況をテキストファイルに保存するように変更した。
 #  2024-08-20 気軽にベースモデルを切り替えられるように変更した。切り替えた際は学習係数に注意すること。
 #  2024-09-19 保存フォルダにタグを付けられるようにした。設定を変えながら学習を繰り返す場合に便利になると思う。ついでに重複コードを整理した。
+#  2025-03-25 image_preprocessing16に切り替え
 # author: Katsuhiro MORISHITA　森下功啓
 # created: 2021-10-18
-import sys, os, re, glob, copy, time, pickle, pprint, argparse, ast, shutil
+import sys, os, re, glob, copy, time, pickle, pprint, argparse, ast, shutil, gc
 from datetime import datetime as dt
+
 import tensorflow as tf
 from tensorflow.keras import regularizers
 from tensorflow.keras.models import Sequential, load_model, Model
@@ -46,12 +48,11 @@ from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
 from tensorflow.keras.applications.xception import Xception
 from PIL import Image
 import numpy as np
-import gc
 import cv2
 import yaml
 
-from libs.mlcore19 import *
-import libs.image_preprocessing15 as ip
+from libs.mlcore20 import *
+import libs.image_preprocessing16 as ip
 
 
 

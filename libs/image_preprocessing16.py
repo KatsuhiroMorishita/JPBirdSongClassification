@@ -23,8 +23,12 @@
 #  2023-05-23 ver.15 コメント追記。エラーをスローする際のメッセージをわかりやすく変更。
 #  2023-07-12        to_categorical()にて、最大のID番号を指定できるように変更
 #  2023-12-09        read_image()でファイルのリサイズに失敗することがったので、try文を追加した。再現しないのでよくわからん。
+#  2024-08-12        画像読み込み後に、クラスごとの画像数などを保存するように変更した。（後で状況を確認するため）
+#  2025-03-25 ver.16 読み込んだ画像のクラス名が不明な場合にログを残すように変更した。
 # created: 2018-08-20 @ver.1
 import sys, os, re, glob, pickle, pprint, threading, time
+from datetime import datetime as dt
+
 from matplotlib import pylab as plt
 from PIL import Image
 from skimage.transform import rotate   # scipyのrotateは推奨されていない@2018-08ので、skimageを使う。こっちの方が使い勝手が良い
@@ -87,6 +91,13 @@ def get_class_names(dir_name, class_sets, ignore_list=[], exchange_dict={}):
     splited = set(base_dir.split("_"))
     local_classes = splited & class_sets   # 積集合でリスト内のクラス名を取得
     local_classes = sorted(list(local_classes))  # 順番をそろえるために、リストにしてソート
+
+    # 不明なクラス名があれば出力
+    unknown_classes = splited - class_sets
+    unknown_classes = list(unknown_classes)
+    if len(unknown_classes) > 0:
+        with open("unknown_class_names.txt", "a", encoding="utf-8-sig") as fw:
+            fw.write(f"{dt.now()},{dir_name},Unkown: {','.join(unknown_classes)}\n")
 
     return ",".join(local_classes)
 
@@ -369,7 +380,7 @@ def read_images1(param):
     # # 正解ラベルをone-hotencoding
     yv = one_hotencoding(data=[y])[0]   # 引数も返り値もlistなので、1つ渡して1つ返してもらうには[0]が必要
 
-    return x, yv, weights_dict, label_dict, output_dim, file_names
+    return x, yv, weights_dict, label_dict, size_dict, output_dim, file_names
 
 
 
@@ -421,7 +432,7 @@ def read_images2(param):
     # 正解ラベルをone-hotencoding
     yv = one_hotencoding(data=[y])[0]   # 引数も返り値もlistなので、1つ渡して1つ返してもらうには[0]が必要
 
-    return x, yv, weights_dict, label_dict, output_dim, file_names
+    return x, yv, weights_dict, label_dict, size_dict, output_dim, file_names
 
 
 
@@ -505,7 +516,7 @@ def read_images3(param):
     weights = np.max(weights) / weights    # 最大値をそれぞれの要素で割る（最小値が1となる）
     weights_dict = {i:weights[i] for i in range(len(class_name_list))}
 
-    return x, y, weights_dict, label_dict, output_dim, file_names
+    return x, y, weights_dict, label_dict, size_dict, output_dim, file_names
 
 
 
@@ -1688,7 +1699,7 @@ def load_save_images(read_func, param, validation_rate=0.1, save_dir="."):
     load_dir: str, 保存するフォルダ
     """
     # 画像を読み込む
-    x, yv, weights_dict, label_dict, output_dim, file_names = read_func(param)
+    x, yv, weights_dict, label_dict, size_dict, output_dim, file_names = read_func(param)
     x_train, y_train, x_test, y_test, test_file_names = split2(x, yv, validation_rate, file_names)  # データを学習用と検証用に分割
 
     if "preprocess_func" in param:   # 必要なら前処理
@@ -1702,7 +1713,24 @@ def load_save_images(read_func, param, validation_rate=0.1, save_dir="."):
                   "weights": True, "label": True, "param": True, "test_names": True}
     else:
         flags = param["save_flags"]
-    
+
+
+    # あとで状況を参照できるように、もろもろの保存
+    size_dict = {key: size_dict[key] for key in sorted(size_dict)}   # クラス名でソート
+    with open(os.path.join(save_dir, "image_read_conditions.txt"), "w", encoding="utf-8-sig") as fw:
+        fw.write(f"shape of x_train: {x_train.shape}\n\n")
+        fw.write(f"shape of y_train: {y_train.shape}\n\n")
+        fw.write(f"shape of x_test: {x_test.shape}\n\n")
+        fw.write(f"shape of y_test: {y_test.shape}\n\n")
+        fw.write(f"size_dict: {size_dict}\n\n")
+        fw.write("size_dict = { # Visibility Adjustment Mode \n")
+        for key in size_dict:
+            val = size_dict[key]
+            fw.write(f"    '{key}':{val},\n")
+        fw.write("} \n")
+        fw.write(f"weights_dict: {weights_dict}\n\n")
+
+
     # 再利用のために、ファイルに保存しておく
     ## フォルダの準備
     os.makedirs(save_dir, exist_ok=True)

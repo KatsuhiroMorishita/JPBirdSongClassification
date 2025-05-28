@@ -29,21 +29,57 @@
 #  2023-11-22        引数で渡されたリスト内のファイルのパスから、IDの一覧を作成・保存するsave_ID_list()を作成（処理をmainから分離した）
 #  2023-11-28        音源と同じフォルダにスペクトログラムを保存する機能を追加
 #  2024-03-05 ver.10 背景にホワイトノイズを加える機能を追加した。cut_bandの機能も拡張して、特定帯域の音圧を0にする機能も追加。
+#  2025-03-21 ver.11 librosa.loadにてエラーが出るので、引数でdtypeを指定するようにした。どのバージョンでもうまくいくかは不明。
+#  2025-03-27        librosa.loadにてエラーが出ないが読み込みに失敗することがある。これは恐らくffmpegのバグか、librosaのバグ。
+#                    本来ならライブラリを置換すべきだが、pydubで何とかする機能を追加した。pydubとmutagenが必要になった。
+#  2025-04-08 ver.12 帯域通過フィルタの機能を実装してみた。実装しておいてなんだが、使い勝手はそれほど良くないかもしれない。
+#  2025-04-11        検証用に、縦軸が線形（リニア・直線的）なスペクトログラムも保存できるように変更した。
+#                    設定ファイルの形式がyamlになった。
 # created: 2019-01-31      
-import os, re, glob, time
-import hashlib
+import os, re, glob, time, hashlib, copy
+import unicodedata   # MacとWindowsのファイル名の扱いの違いを吸収するために使う
+
+import yaml
 import librosa
 import librosa.display
+import matplotlib.pyplot as plt
+from pydub import AudioSegment
 import numpy as np
+from scipy import signal
 from PIL import Image, ImageOps
-import copy
-import unicodedata   # MacとWindowsのファイル名の扱いの違いを吸収するために使う
+
+from mutagen.mp4 import MP4
+from mutagen.flac import FLAC 
+from mutagen.mp3 import MP3
+from mutagen.wave import WAVE
+
+
+
+
+# バターワースフィルタ（バンドパス）
+# https://atatat.hatenablog.com/entry/data_proc_python5
+def bandpass(x, samplerate, fp, fs, gpass=3, gstop=6):
+    """ 特定帯域の音のみを残す
+    fp: list<int, int>, 通過させる帯域。例：[1000,3000]  
+    fs: list<int, int>, 阻止する周波数。例：[500,6000]　この場合は500 Hz以下と6000 kHz以上を阻止する。
+    gpass: int, 通過域端最大損失[dB]
+    gstop: int, 阻止域端最小損失[dB]
+    """
+    fp = np.array(fp)
+    fs = np.array(fs)
+    fn = samplerate / 2 #ナイキスト周波数
+    wp = fp / fn  #ナイキスト周波数で通過域端周波数を正規化
+    ws = fs / fn  #ナイキスト周波数で阻止域端周波数を正規化
+    N, Wn = signal.buttord(wp, ws, gpass, gstop)  #オーダーとバターワースの正規化周波数を計算
+    b, a = signal.butter(N, Wn, "band") #フィルタ伝達関数の分子と分母を計算
+    y = signal.filtfilt(b, a, x) #信号に対してフィルタをかける
+    return y  
 
 
 
 
 def get_melspectrogram_image(data, sr, n_mels=128, fmax=10000, n_fft=2048, hop_length=512, top_remove=0, 
-                             emphasize_band=None, cut_band=None, raw=False, noise=0):
+                             emphasize_band=None, cut_band=None, raw=False, noise=0, bandpass_param=[]):
     """ 波形データをスペクトログラム画像に変換して返す。ただし、メルスケールになっているので注意
     data: list<float> or ndarray<float>, 音の波形データ（切り出したものでもOK）
     sr: float, 音源を読み込む際のリサンプリング周波数[Hz]
@@ -59,7 +95,23 @@ def get_melspectrogram_image(data, sr, n_mels=128, fmax=10000, n_fft=2048, hop_l
     #print("debug info: ", data.size, len(data), np.sum(data), np.std(data), sr, n_mels, fmax, n_fft, hop_length)
     #data = np.nan_to_num(data, nan=np.nanmean(data))    # 非値を平均値に置換する
 
-    data = data + np.std(data) * np.random.rand(len(data)) * noise  # add noise
+    # 帯域通過フィルタ
+    if len(bandpass_param) == 4:
+        bandpass_param = sorted(bandpass_param)
+        fp_ = bandpass_param[1:3]                     # [200, 600, 2000, 5000] to [600, 2000]
+        fs_ = [bandpass_param[0], bandpass_param[3]]  # [200, 600, 2000, 5000] to [200, 5000]
+        data = bandpass(data, sr, fp_, fs_)
+        if np.isnan(data[0]):
+            print("check your bandpass parameter.")
+        data = np.nan_to_num(data)
+        #print(">>>", data[:10], np.max(data), np.sum(data))
+
+        noise += 0.01
+
+    # ノイズ付与
+    data = data + np.std(data) * np.random.rand(len(data)) * noise  # add noise 
+    
+    # スペクトログラム作成と輝度調整
     S = librosa.feature.melspectrogram(y=data, sr=sr, n_mels=n_mels, fmax=fmax, n_fft=n_fft, hop_length=hop_length)  # スペクトログラムのデータを取得（2次元のndarray型）
     #log_S = librosa.power_to_db(S, ref=np.max)    # 対数を掛ける
     log_S = librosa.power_to_db(S, ref=np.max(S))  # 対数を掛ける
@@ -153,18 +205,9 @@ def save_spectrogram_with_window(data, params, rp0=0, terminal=None):
     sr = params["sr"]
     hop = params["hop"]
     tag = params["tag"]
-    fmax = params["fmax"]
     root = params["root"]
     term = params["term"]
-    n_fft = params["n_fft"]
-    n_mels = params["n_mels"]
-    top_remove = params["top_remove"]
     shift_rate = params["shift_rate"]
-    emphasize_band = params["emphasize_band"]
-    cut_band = params["cut_band"]
-    raw = params["raw"]
-    noise_level = params["noise"]
-    
     rp = 0   # read point
     exit_flag = False
 
@@ -197,28 +240,51 @@ def save_spectrogram_with_window(data, params, rp0=0, terminal=None):
             break
 
         # スペクトログラム作成
-        hop_length = int(sr * hop)
         msg = "split"
-        #try:
-        img = get_melspectrogram_image(sliced_data, sr=sr, n_mels=n_mels, fmax=fmax, n_fft=n_fft, 
-                                       hop_length=hop_length, top_remove=top_remove, 
-                                       emphasize_band=emphasize_band, cut_band=cut_band, 
-                                       raw=raw, noise=noise_level)  # スペクトログラムのデータを取得（2次元のndarray型）
-        #except Exception as e:
-        #    img = np.zeros((120,120), dtype=np.int8)
-        #    msg = "error"
-
-        # 加工
-        #img[img < 120] = 0
-
-        # 画像として保存
-        im = Image.fromarray(np.uint8(img))
         t_start = (rp + rp0) / sr    # 切り出し開始時刻[s]
         t_width = (ep - rp) / sr     # 切り出し幅[s]
         fname = "{3}__{0}__{1:.1f}_{2:.1f}.png".format(tag, t_start, t_width, msg)
         path_list = [root, fname]
         path = os.path.join(*path_list)
-        im.save(path)
+
+        if params["spectrogram_mode"] == "spectrogram1":
+            arg = params["spectrogram1"].copy()
+            arg["data"] = sliced_data
+            arg["sr"] = sr
+            arg["hop_length"] = int(sr * hop)
+            img = get_melspectrogram_image(**arg)  # スペクトログラムのデータを取得（2次元のndarray型）
+            
+            #except Exception as e:
+            #    img = np.zeros((120,120), dtype=np.int8)
+            #    msg = "error"
+
+            # 加工
+            #img[img < 120] = 0
+
+            # 画像として保存
+            im = Image.fromarray(np.uint8(img))
+            im.save(path)
+
+        elif params["spectrogram_mode"] == "spectrogram2":
+            # 短時間フーリエ変換
+            S = np.abs(librosa.stft(sliced_data))
+             
+            # 画像出力
+            arg = params["spectrogram2"].copy()
+            plt.figure(figsize=arg["figsize"])
+            librosa.display.specshow(librosa.amplitude_to_db(S, ref=np.max), sr=sr, y_axis='log', x_axis='time')
+            plt.title('Power spectrogram')
+            plt.colorbar(format='%+2.0f dB')
+            plt.yscale('linear')  # 線形スケールに設定
+            plt.yticks(np.arange(0, 22001, 1000))
+            plt.xticks(np.arange(0, len(sliced_data) // sr + 0.1, arg["xticks_unit"]))
+            plt.ylim(arg["ylim"])
+            plt.xlim([0, len(sliced_data) // sr])
+            plt.tight_layout()
+            plt.grid(True, linestyle='--', alpha=0.3, c="yellow")
+            plt.savefig(path)
+            plt.cla()
+            plt.clf()
 
         # rp更新
         rp += int(sr * term * shift_rate)   # shift_rateが0.5なら半分だけ重ねながらずらす。1で重なりなし。2なら1つ分開く。
@@ -312,7 +378,7 @@ def mask(mask_list: list, size: int, t0: float, sr: float, margin: float):
 
 
 
-def load_sound(file_path: str, params: dict, try_times=4):
+def load_sound(file_path: str, params: dict, try_times=2):
     """ 指定された音源ファイルを読み込む
     file_path: str, 音源ファイルのパス
     params: dict, 設定を書き込んだ辞書
@@ -332,24 +398,82 @@ def load_sound(file_path: str, params: dict, try_times=4):
         file_path = change_path(file_path, str1, str2)
 
     # 音源ファイルの読み込み。yに波形が配列で入り、srにはサンプリング周波数が入る
+    # ファイルの存在確認
     if not os.path.exists(file_path):
         print("{} is not exists.".format(file_path))
         return
     else:
         print("{} is processing...".format(file_path))
 
+    # メタ情報確認
+    name, ext = os.path.splitext(file_path)
+    ext = ext[1:].lower()
+    length_meta = 48 * 3600  # 48 hours
+    audio_info = None
+    if ext == "mp3":
+        audio_info = MP3(file_path).info
+    elif ext in ["aac", "m4a"]:
+        audio_info = MP4(file_path).info
+    elif ext == "flac":
+        audio_info = FLAC(file_path).info
+    elif ext == "wav":
+        audio_info = WAVE(file_path).info
+    if audio_info is not None:
+        length_meta = audio_info.length
+        print(f"sound file length: {length_meta} [second]")
+
 
     # 音源ファイル読み込み　失敗したときへの対応を含む
     success = False
+    length_read = 0.0
     for _ in range(try_times):
         try:
-            y, sr = librosa.load(file_path, sr=sr, res_type=load_mode, mono=mono)  # sampling frequency == sampling rate
+            # ffmpegかlibrosaの問題でエラーは出ないが読み込みに失敗することがある。
+            y, sr = librosa.load(file_path, sr=sr, res_type=load_mode, mono=mono, dtype=np.float32)  # sampling frequency == sampling rate
+            
+            # check sound length
+            if len(y.shape) == 2:   # multi-channel
+                length_read = len(y[0]) / sr
+            else:
+                length_read = len(y) / sr
+            
             success = True
             break
-        except Exception as e:
+
+        except Exception as e:    # NASへのアクセスだとたまに失敗することがあるのでその対応
             print(str(e))
             print("--retry. wait 20 seconds.--")
-            time.sleep(20)
+            time.sleep(7.951)
+
+    # 読み込みがおかしい場合への対応
+    exts = ["wav", "flac", "mp3", "m4a", "aac"]
+    #print(success, length / length_meta, ext in exts)
+    if (success == False or length_read == 0.0 or length_read / length_meta < 0.9) and ext in exts:
+        print("---reading retry with pydub---")
+        print("******* Check your ffmpeg and librosa version. *******\n" * 3)
+
+        audio = AudioSegment.from_file(file_path, ext)
+        sr_ = audio.frame_rate
+        if sr != sr_:   # resampling
+            audio = audio.set_frame_rate(sr)
+        
+        # チャンネルごとにデータを整理
+        sound_data = np.array(audio.get_array_of_samples(), dtype=np.float32)
+        sig1 = sound_data[::audio.channels]
+        sig1 /= sig1.max()
+        #sig1 /= 2**16
+        if audio.channels == 1 or mono == True:
+            y = sig1
+        elif audio.channels >= 2:
+            y = [sig1]
+            for i in range(1, audio.channels):
+                sig2 = sound_data[i::audio.channels]
+                sig2 /= sig2.max()
+                #sig2 /= 2**16
+                y.append(sig2)
+        y = np.array(y)
+
+        success = True
 
     # 左右の音源の読み込み分け
     if mono == False:
@@ -570,23 +694,26 @@ def save_ID_list(fnames):
 
 
 
-def read_setting(fname, param={}):
+def read_setting(fname, param:dict):
     """ 設定を読み込む。返り値は辞書で返す
     eval()を使っているので、不正なコードを実行しないように、気をつけてください。
-    param: dict, パラメータを格納した辞書
     """
     with open(fname, "r", encoding="utf-8-sig") as fr:
-        lines = fr.readlines()
+        obj = yaml.safe_load(fr)
+        
+        for key, value in obj.items():
+            # globを使ったファイル検索命令への対応
+            if isinstance(value, str) and "glob.glob" == value[:9]:
+                index = value.find(")")
+                if index > 0:
+                    order = value[:index + 1]
+                    v = eval(order)
+                    obj[key] = v
 
-        for line in lines:
-            line = line.rstrip()  # 改行コード削除
-            if "#" in line:       # もしコメントが入っていたら、それ以降を削除
-                line = line[:line.index("#")]
-            line = line.rstrip()  # 右からスペースを消す
-            if line == "" or "," not in line:
-                continue
-            param_name, value = line.split(",", 1)   # 最大1回の分割
-            param[param_name] = eval(value)          # 文字列のパラメータは""等を付けること
+            # 単なるlistがあれば、tupleにしておく
+            #if isinstance(value, list):
+            #    obj[key] = tuple(value)
+        param.update(**obj)   # 辞書の結合 （Python 3.9以降なら記述を簡単にできる）
 
     return param
 
@@ -596,29 +723,40 @@ def set_default_setting():
     """ デフォルトの設定をセットして返す
     """
     params = {}
-    params["term"] = 5              #: int, スペクトログラムを作成する時間幅[s]。-1を渡すと、time_list以外では分割しない。
-    params["fmax"] = 10000          #: int, スペクトログラムの最高周波数[Hz]。fmax < sr / 2でないと、警告がでる。
+    params["term"] = 5          #: int, スペクトログラムを作成する時間幅[s]。-1を渡すと、time_list以外では分割しない。
     params["shift_rate"] = 0.5  #: float, スペクトログラムを作成する際に、既に作成済みのものとどの程度離すかを決める割合。1.0で重なり量は0。0.5だと半分重なる。
     params["time_list"] = []    #: list<tuple<int, int>>, 区間指定。指定はタプルで(開始時間[s], 時間幅[s])と行う。空のリストの場合は音源の最初から最後までが画像作成の対象となる。
     params["positive"] = True   #: bool, Trueだと、time_listにある区間を処理対象とする。Falseだと、time_listの範囲外を処理対象とする。
-    params["sr"] = 44100        #: float, 音源を読み込む際のリサンプリング周波数[Hz]
+    params["sr"] = 44100        #: int, 音源を読み込む際のリサンプリング周波数[Hz]
     params["load_mode"] = "kaiser_fast"    #: str, librosa.load()でres_typeに代入する文字列。読み込み速度が変わる。kaiser_fastとkaiser_bestではkaiser_fastの方が速い。
-    params["top_remove"] = 8               #: int, 作成したスペクトログラムの上部（周波数の上端）から削除するピクセル数。フィルタの影響を小さくするため。
-    params["hop"] = 0.025       #: int, 時間分解能[s]
+    params["hop"] = 0.0251      #: float, 時間分解能[s]
     params["root"] = ""         #: str, ファイルを保存するフォルダ。""だと、カレントディレクトリに保存する。
-    params["n_mels"] = 128      #: int, 周波数方向の分解能（画像の縦方向のピクセル数）
-    params["n_fft"] = 2048      #: int, フーリエ変換に使うポイント数
     params["pad_mode"] = None   # 切り出した音源の前と後につけるデータのモード。noiseとextendがある。
     params["file_names"] = []
-    params["emphasize_band"] = None   # 強調する帯域。例：[1000, 3000, 0.5] 1 kHz〜3 kHzを強調する場合で、輝度を小さい順にソートした際の0レベルの閾値。0.5なら中央値を輝度0に調整する。
-    params["cut_band"] = None    # カットしたい帯域。例：[(0, 700, "upper")]
     params["path_replace"] = []  # ファイルのパスを置換する場合に利用（普段はNAS内のファイルを処理しているが、高速化のために外付けSSDにデータを移した場合を想定）
     params["mask_list"] = []     # スペクトログラムを作ってはならない区間のリスト
-    params["raw"] = False        # スペクトログラムに生の音声の振幅情報を埋め込むかどうか。Trueで埋め込む。
     params["mask_margin"] = 0    # マスク処理をかける際に、前後の方向に少し余裕を見て消す場合は0以上を設定のこと。
     params["lr"] = ""            # 音源のLRの読み込み分けを行うかを決める。"right"でR。
     params["location_save_only"] = False  # Trueだと、location IDのみを保存する
-    params["noise"] = 0.0        # 0より大きい値で、ノイズを加える
+    params["spectrogram_mode"] = "spectrogram1"   #  spectrogram1 or spectrogram2
+
+    params["spectrogram1"] = {  # メルスケールのスペクトログラム作成上のパラメータ
+        "n_mels": 128,      # int, 周波数方向の分解能（画像の縦方向のピクセル数）
+        "fmax": 10000,      # int, スペクトログラムの最高周波数[Hz]。fmax < sr / 2でないと、警告がでる。
+        "top_remove": 8,    # int, 作成したスペクトログラムの上部（周波数の上端）から削除するピクセル数。フィルタの影響を小さくするため。
+        "n_fft": 2048,      # int, フーリエ変換に使うポイント数
+        "raw": False,       # スペクトログラムに生の音声の振幅情報を埋め込むかどうか。Trueで埋め込む。
+        "emphasize_band": None,   # 強調する帯域。例：[1000, 3000, 0.5] 1 kHz〜3 kHzを強調する場合で、輝度を小さい順にソートした際の0レベルの閾値。0.5なら中央値を輝度0に調整する。
+        "cut_band": None,         # カットしたい帯域。複数指定OK。例：[(0, 700, "upper")]
+        "bandpass_param": [],     # 帯域通過フィルタのパラメータ。例：[200, 600, 2000, 5000]
+        "noise": 0.0        # 0より大きい値で、ノイズを加える
+        }  
+
+    params["spectrogram2"] = {  # リニアスケールのスペクトログラム作成上のパラメータ
+        "ylim": [100, 10000],
+        "xticks_unit": 1.0,    # 横軸のグリッド単位
+        "figsize": (10,6)      # 図のサイズ。横縦の順。
+        }
     return params
 
 
@@ -626,7 +764,7 @@ def set_default_setting():
 def main():
     # 設定を読み込み
     setting = set_default_setting()
-    setting = read_setting("sound_image_setting10.txt", setting)
+    setting = read_setting("sound_image_setting12.yaml", setting)
     fnames = sorted(setting["file_names"])
     print(fnames)
 

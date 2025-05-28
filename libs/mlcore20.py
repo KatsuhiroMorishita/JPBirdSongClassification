@@ -18,8 +18,10 @@
 #  2023-05-20 ver.17 SavedModel形式の読み込みに対応。独自の損失関数を作成する機能も追加した。
 #  2023-10-02 ver.18 plot_history()とsave_history()でaccの保存に対応
 #  2024-03-26 ver.19 focal_lossに重み係数を掛けるように変更
+#  2025-03-25 ver.20 image_preprocessing16.pyに変更
 # created: 2020-04-23
 import sys, os, pickle, time
+
 import tensorflow as tf
 from tensorflow.keras.models import Sequential, load_model, Model
 from tensorflow.keras.layers import Dense, Dropout, Activation, Flatten
@@ -35,7 +37,7 @@ import numpy as np
 import pandas as pd
 
 
-from . import image_preprocessing15 as ip
+from . import image_preprocessing16 as ip
 
 
 

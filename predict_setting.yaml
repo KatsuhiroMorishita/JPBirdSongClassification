@@ -1,20 +1,29 @@
-# for model 20231216
+# memo
+# ■画像サイズ
+#  2018年モデルは(150, 150, 1) 
+#  2020年モデルは(200, 120, 3)  n_mels=128, top_remove=8とする。（要確認）
+#  2021年モデルは(200, 120, 3)  n_mels=120, top_remove=0とする。
+# ■他
+#  コロン:の後には半角スペースを入れること。
+#  シャープ#より右側はコメントで、プログラムには無視されます。
+
 
 # 学習モデルを動かすための設定
 GPU: True       # GPUを使うならTrue
 batch_size: 100  # 1度に予測する画像枚数。GPU使用で100とかだと若干だが時短になる
 
-# 識別対象の設定（*を使ってパターンにマッチするファイルを全て処理できます。）
-file_names: glob.glob(r'./data/sounds/*.wav')
 
+# サンプル音声
+file_names: glob.glob(r'./data\sounds\yanbal.wav')
 
 # その他の設定
 mode: "sound"   # image or sound
 size: [200, 120, 3]  # 識別機用の画像のサイズ. (width, height, channel)
-models: ["./models/model20231216"]   # モデルの選択
-model_format: "SavedModel"   # 保存するモデルの形式. "SavedModel" or ".hdf5"
-th: 0.5          # 尤度で識別した、と判断する閾値
-loss: "local.focal_loss"    # 損失関数
+models: ["./models/model20240305"]   # 予測に使うモデルが入ったフォルダの選択. listで複数指定可能。最期に学習したモデルを使用する場合は、"last train"とする。   
+                                     # 例：['./runs/train1/cp_models'], "last train", ["./models/model202406"]
+model_format: "SavedModel"   # 保存されたモデルの形式. "SavedModel" or ".hdf5"
+th: 0.8          # 尤度で識別した、と判断する閾値
+loss: "local.focal_loss"    # カスタムの損失関数があれば、local.に続けて使用した関数の名前を記すこと。
 
 
 # 音源からスペクトログラムを作るための設定（学習に使用した画像の生成条件と揃えること）
@@ -25,7 +34,9 @@ imagegen_params:    # スペクトログラムを作る基本関数へ渡すパ�
   n_fft: 2048       # フーリエ変換に使うポイント数
   top_remove: 0     # 内部で画像生成後に削る上端のピクセル数。縦のピクセル数はn_mels-top_removeとなる。
   raw: True         # スペクトログラムに生の音声の振幅情報を埋め込むかどうか。Trueで埋め込む。
-  #cut_band: [[15000, 22000, "lower"]]
+  #cut_band: [[15000, 22000, "lower"]]     # 帯域を指定して無音化する。指定例：[[0, 500, "upper"], [16000, 22000, "lower"]]
+  #bandpass_param: []     # 帯域通過フィルタのパラメータ。例：[200, 600, 2000, 5000] 意味は、200以下と5000Hz以上を阻止して、600-2000 Hzを通過させる、となる。設定次第で計算結果がNullとなるので注意。
+  #emphasize_band: None # 強調する帯域. # exmple: [2500, 4500, 0.1] 
   noise: 0.0
 
 load_mode: "kaiser_fast"   # 読み込む方法。mp3で影響大。kaiser_bestの方が綺麗ではある。
