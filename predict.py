@@ -1073,38 +1073,38 @@ def set_default_setting():
     """ デフォルトの設定をセットして返す
     """
     params = {}
-    params["file_names"] = []      # 処理対象の音源・画像のパスのリスト
-    params["targets"] = []         # 処理対象の音源・画像のフォルダやファイルパスパターンのパスのリスト（ディレクトリでの指定や、複数指定はこちらを使う）
-    params["models"] = "all"       # 予測に使用するモデルのあるディレクトリ名の リスト or "all" or "last train"。"all"だと、カレントディレクトリとそのサブディレクトリ直下を探す。
+    params["file_names"] = []       # 処理対象の音源・画像のパスのリスト
+    params["targets"] = []          # 処理対象の音源・画像のフォルダやファイルパスパターンのパスのリスト（ディレクトリでの指定や、複数指定はこちらを使う）
+    params["models"] = "all"        # 予測に使用するモデルのあるディレクトリ名の リスト or "all" or "last train"。"all"だと、カレントディレクトリとそのサブディレクトリ直下を探す。
     params["model_format"] = ".hdf5"  # モデルの形式。.hdf5, .h5, SavedModel
     params["loss"] = "binary_crossentropy"  # 損失関数（独自の定義関数がなければ、無視してよい）
     params["custom_objects"] = {}      # 独自の活性化関数や損失関数を格納するカスタムオブジェクト
     params["label_pattern"] = "label*.pickle"  # ラベルの名前パターン
-    params["mode"] = "sound"       # 処理モード（画像imageか、音源soundか）
-    params["GPU"] = True           # TrueだとGPUを使用する
-    params["batch_size"] = 1       # バッチサイズ
-    params["size"] = (32, 32, 1)   # 予測にかける画像のサイズ。最後の1はチャンネル。設定ファイルではlist型として記述すること。
-    params["window_size"] = 5      # 音声の切り出し幅[s]
-    params["hop"] = 0.0251         #: float, 時間分解能[s]
+    params["mode"] = "sound"        # 処理モード（画像imageか、音源soundか）
+    params["GPU"] = True            # TrueだとGPUを使用する
+    params["batch_size"] = 1        # バッチサイズ
+    params["size"] = (32, 32, 1)    # 予測にかける画像のサイズ。最後の1はチャンネル。設定ファイルではlist型として記述すること。
+    params["window_size"] = 5       # 音声の切り出し幅[s]
+    params["hop"] = 0.0251          #: float, 時間分解能[s]
     params["load_mode"] = "kaiser_fast",    #: str, librosa.load()でres_typeに代入する文字列。読み込み速度が変わる。kaiser_fastとkaiser_bestではkaiser_fastの方が速い。
-    params["shift_rate"] = 1.0     # 音源のスライド量。0.5だと、半分重ねる。1だとw分ずらす。2だと2w分ずらす（処理量は半分）。
-    params["imagegen_params"] = {  # スペクトログラムを作成する関数への指示パラメータ
-            "sr": 44100,           #: int, 音源を読み込む際のリサンプリング周波数[Hz]
-            "fmax": 10000,         #: int, スペクトログラムの最高周波数[Hz]。fmax < sr / 2でないと、警告がでる。
-            "top_remove": 0,       #: int, 作成したスペクトログラムの上部（周波数の上端）から削除するピクセル数。フィルタの影響を小さくするため。
-            "n_mels": 128,         #: int, 周波数方向の分解能（画像の縦方向のピクセル数）
-            "n_fft": 2048,         #: int, フーリエ変換に使うポイント数
-            "raw": False,          # Trueだと音圧情報をスペクトログラムの一番上のセルに埋め込む
-            "noise": 0.0,          # 音源の波形に加えるノイズの大きさ。波形の標準偏差が基準。
-            "cut_band": None,      # 帯域を指定して無音化する。指定例：[[0, 500, "upper"], [16000, 22000, "lower"]]
-            "bandpass_param": []   # 帯域通過フィルタのパラメータ。例：[200, 600, 2000, 5000] 意味は、200以下と5000Hz以上を阻止して、600-2000 Hzを通過させる、となる。設定次第で計算結果がNullとなるので注意。
-            "emphasize_band": None # 強調する帯域. # exmple: [2500, 4500, 0.1] 
+    params["shift_rate"] = 1.0      # 音源のスライド量。0.5だと、半分重ねる。1だとw分ずらす。2だと2w分ずらす（処理量は半分）。
+    params["imagegen_params"] = {   # スペクトログラムを作成する関数への指示パラメータ
+            "sr": 44100,            #: int, 音源を読み込む際のリサンプリング周波数[Hz]
+            "fmax": 10000,          #: int, スペクトログラムの最高周波数[Hz]。fmax < sr / 2でないと、警告がでる。
+            "top_remove": 0,        #: int, 作成したスペクトログラムの上部（周波数の上端）から削除するピクセル数。フィルタの影響を小さくするため。
+            "n_mels": 128,          #: int, 周波数方向の分解能（画像の縦方向のピクセル数）
+            "n_fft": 2048,          #: int, フーリエ変換に使うポイント数
+            "raw": False,           # Trueだと音圧情報をスペクトログラムの一番上のセルに埋め込む
+            "noise": 0.0,           # 音源の波形に加えるノイズの大きさ。波形の標準偏差が基準。
+            "cut_band": None,       # 帯域を指定して無音化する。指定例：[[0, 500, "upper"], [16000, 22000, "lower"]]
+            "bandpass_param": [],   # 帯域通過フィルタのパラメータ。例：[200, 600, 2000, 5000] 意味は、200以下と5000Hz以上を阻止して、600-2000 Hzを通過させる、となる。設定次第で計算結果がNullとなるので注意。
+            "emphasize_band": None, # 強調する帯域. # exmple: [2500, 4500, 0.1] 
             }
-    params["th"] = 0.9             # 判定に用いる尤度
+    params["th"] = 0.9              # 判定に用いる尤度
     params["preprocess_chain"] = [preprocessing]
-    params["save_img"] = False     # デバッグ用に、画像を作成
-    params["lr"] = ""              # "left" or "right" or other
-    params["tag"] = ""               # フォルダに付ける名前
+    params["save_img"] = False      # デバッグ用に、画像を作成
+    params["lr"] = ""               # "left" or "right" or other
+    params["tag"] = ""              # フォルダに付ける名前
     params["CAM"] = {"enable":False,    # 識別結果の根拠を可視化する場合はTrue
                      "class_name": "", 
                      "last_conv_layer_name":""}  # 最期の畳み込み層の名前。CAMによるヒートマップを保存する場合に指定すること。
